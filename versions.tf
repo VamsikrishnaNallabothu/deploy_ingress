@@ -23,3 +23,13 @@ terraform {
   # }
 }
 
+provider "aws" {
+  region     = local.config.AWS_REGION
+  access_key = local.config.AWS_ACCESS_KEY_ID
+  secret_key = local.config.AWS_SECRET_ACCESS_KEY
+
+  default_tags {
+    tags = local.tags
+  }
+}
+

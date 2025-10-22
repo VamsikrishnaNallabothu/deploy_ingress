@@ -3,20 +3,6 @@
 # Architecture: Internet → IGW → GWLB Endpoint → Firewall → GWLB Endpoint → ALB → Workloads
 # ============================================================================
 
-terraform {
-  required_version = ">= 1.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
-
 # ============================================================================
 # Data Sources (for Brownfield Support)
 # ============================================================================
@@ -39,20 +25,20 @@ data "aws_ami" "amazon_linux_2" {
 
 # Get existing VPC if using brownfield
 data "aws_vpc" "existing" {
-  count = var.create_vpc ? 0 : 1
-  id    = var.existing_vpc_id
+  count = local.config.CREATE_VPC ? 0 : 1
+  id    = local.config.EXISTING_VPC_ID
 }
 
 # Get existing IGW if specified
 data "aws_internet_gateway" "existing" {
-  count              = var.create_igw ? 0 : (var.existing_igw_id != "" ? 1 : 0)
-  internet_gateway_id = var.existing_igw_id
+  count              = local.config.CREATE_IGW ? 0 : (try(local.config.EXISTING_IGW_ID, "") != "" ? 1 : 0)
+  internet_gateway_id = local.config.EXISTING_IGW_ID
 }
 
 # Get jumphost VPC for peering
 data "aws_vpc" "jumphost" {
-  count = var.enable_vpc_peering ? 1 : 0
-  id    = var.jumphost_vpc_id
+  count = local.config.ENABLE_VPC_PEERING ? 1 : 0
+  id    = local.config.JUMPHOST_VPC_ID
 }
 
 # ============================================================================
@@ -60,20 +46,15 @@ data "aws_vpc" "jumphost" {
 # ============================================================================
 
 locals {
-  common_tags = merge(
-    {
-      Project     = var.project_name
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      Architecture = "Ingress-Inspection"
-    },
-    var.tags
-  )
+  # Resource naming - all resources use NAME_PREFIX from config.yaml
+  resource_prefix = local.name_prefix
 
-  vpc_id = var.create_vpc ? aws_vpc.main[0].id : var.existing_vpc_id
-  igw_id = var.create_igw ? aws_internet_gateway.main[0].id : (var.existing_igw_id != "" ? var.existing_igw_id : null)
+  # VPC and network resources
+  vpc_id = local.config.CREATE_VPC ? aws_vpc.main[0].id : local.config.EXISTING_VPC_ID
+  igw_id = local.config.CREATE_IGW ? aws_internet_gateway.main[0].id : (try(local.config.EXISTING_IGW_ID, "") != "" ? local.config.EXISTING_IGW_ID : null)
   
-  ami_id = var.workload_ami_id != "" ? var.workload_ami_id : data.aws_ami.amazon_linux_2.id
+  # AMI selection
+  ami_id = try(local.config.WORKLOAD_AMI_ID, "") != "" ? local.config.WORKLOAD_AMI_ID : data.aws_ami.amazon_linux_2.id
   
   # Default user data for web server
   default_user_data = <<-EOF
@@ -120,7 +101,7 @@ locals {
 HTML
   EOF
 
-  workload_user_data_final = var.workload_user_data != "" ? var.workload_user_data : local.default_user_data
+  workload_user_data_final = local.config.WORKLOAD_user_data != "" ? local.config.WORKLOAD_user_data : local.default_user_data
 }
 
 # ============================================================================
@@ -128,29 +109,29 @@ HTML
 # ============================================================================
 
 resource "aws_vpc" "main" {
-  count = var.create_vpc ? 1 : 0
+  count = local.config.CREATE_VPC ? 1 : 0
 
-  cidr_block           = var.vpc_cidr
+  cidr_block           = local.config.VPC_CIDR
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-vpc"
+      Name = "${local.resource_prefix}-vpc"
     }
   )
 }
 
 resource "aws_internet_gateway" "main" {
-  count = var.create_igw ? 1 : 0
+  count = local.config.CREATE_IGW ? 1 : 0
 
   vpc_id = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-igw"
+      Name = "${local.resource_prefix}-igw"
     }
   )
 
@@ -163,17 +144,17 @@ resource "aws_internet_gateway" "main" {
 
 # ALB Public Subnets
 resource "aws_subnet" "alb" {
-  count = length(var.availability_zones)
+  count = length(local.config.AVAILABILITY_ZONES)
 
   vpc_id                  = local.vpc_id
-  cidr_block              = var.alb_subnet_cidrs[count.index]
-  availability_zone       = var.availability_zones[count.index]
+  cidr_block              = local.config.ALB_SUBNET_CIDRS[count.index]
+  availability_zone       = local.config.AVAILABILITY_ZONES[count.index]
   map_public_ip_on_launch = true
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-alb-subnet-${var.availability_zones[count.index]}"
+      Name = "${local.resource_prefix}-alb-subnet-${local.config.AVAILABILITY_ZONES[count.index]}"
       Tier = "Public-ALB"
     }
   )
@@ -183,16 +164,16 @@ resource "aws_subnet" "alb" {
 
 # GWLB Endpoint Subnets
 resource "aws_subnet" "gwlbe" {
-  count = length(var.availability_zones)
+  count = length(local.config.AVAILABILITY_ZONES)
 
   vpc_id            = local.vpc_id
-  cidr_block        = var.gwlbe_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
+  cidr_block        = local.config.GWLBE_SUBNET_CIDRS[count.index]
+  availability_zone = local.config.AVAILABILITY_ZONES[count.index]
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-gwlbe-subnet-${var.availability_zones[count.index]}"
+      Name = "${local.resource_prefix}-gwlbe-subnet-${local.config.AVAILABILITY_ZONES[count.index]}"
       Tier = "GWLBE"
     }
   )
@@ -202,16 +183,16 @@ resource "aws_subnet" "gwlbe" {
 
 # Workload Private Subnets
 resource "aws_subnet" "workload" {
-  count = length(var.availability_zones)
+  count = length(local.config.AVAILABILITY_ZONES)
 
   vpc_id            = local.vpc_id
-  cidr_block        = var.workload_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
+  cidr_block        = local.config.WORKLOAD_SUBNET_CIDRS[count.index]
+  availability_zone = local.config.AVAILABILITY_ZONES[count.index]
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-workload-subnet-${var.availability_zones[count.index]}"
+      Name = "${local.resource_prefix}-workload-subnet-${local.config.AVAILABILITY_ZONES[count.index]}"
       Tier = "Private-Workload"
     }
   )
@@ -224,17 +205,17 @@ resource "aws_subnet" "workload" {
 # ============================================================================
 
 resource "aws_vpc_endpoint" "gwlbe" {
-  count = var.enable_gwlb_inspection ? length(var.availability_zones) : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? length(local.config.AVAILABILITY_ZONES) : 0
 
   vpc_id            = local.vpc_id
-  service_name      = var.gwlb_endpoint_service_name
+  service_name      = local.config.GWLB_ENDPOINT_SERVICE_NAME
   vpc_endpoint_type = "GatewayLoadBalancer"
   subnet_ids        = [aws_subnet.gwlbe[count.index].id]
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-gwlbe-${var.availability_zones[count.index]}"
+      Name = "${local.resource_prefix}-gwlbe-${local.config.AVAILABILITY_ZONES[count.index]}"
     }
   )
 
@@ -246,16 +227,16 @@ resource "aws_vpc_endpoint" "gwlbe" {
 # ============================================================================
 
 resource "aws_vpc_peering_connection" "jumphost" {
-  count = var.enable_vpc_peering ? 1 : 0
+  count = local.config.ENABLE_VPC_PEERING ? 1 : 0
 
   vpc_id      = local.vpc_id
-  peer_vpc_id = var.jumphost_vpc_id
+  peer_vpc_id = local.config.JUMPHOST_VPC_ID
   auto_accept = true
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-to-jumphost-peering"
+      Name = "${local.resource_prefix}-to-jumphost-peering"
       Side = "Requester"
     }
   )
@@ -272,9 +253,9 @@ resource "aws_route_table" "alb" {
   vpc_id = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-alb-rt"
+      Name = "${local.resource_prefix}-alb-rt"
     }
   )
 
@@ -283,7 +264,7 @@ resource "aws_route_table" "alb" {
 
 # Route to Internet via GWLB Endpoint (for symmetric inspection)
 resource "aws_route" "alb_to_internet" {
-  count = var.enable_gwlb_inspection ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? 1 : 0
 
   route_table_id         = aws_route_table.alb.id
   destination_cidr_block = "0.0.0.0/0"
@@ -294,7 +275,7 @@ resource "aws_route" "alb_to_internet" {
 
 # Direct route to IGW if GWLB inspection is disabled
 resource "aws_route" "alb_to_igw_direct" {
-  count = var.enable_gwlb_inspection ? 0 : 1
+  count = local.config.ENABLE_GWLB_INSPECTION ? 0 : 1
 
   route_table_id         = aws_route_table.alb.id
   destination_cidr_block = "0.0.0.0/0"
@@ -305,10 +286,10 @@ resource "aws_route" "alb_to_igw_direct" {
 
 # Route to Jumphost VPC via peering
 resource "aws_route" "alb_to_jumphost" {
-  count = var.enable_vpc_peering ? 1 : 0
+  count = local.config.ENABLE_VPC_PEERING ? 1 : 0
 
   route_table_id            = aws_route_table.alb.id
-  destination_cidr_block    = var.jumphost_vpc_cidr
+  destination_cidr_block    = local.config.JUMPHOST_VPC_CIDR
   vpc_peering_connection_id = aws_vpc_peering_connection.jumphost[0].id
 
   depends_on = [aws_route_table.alb, aws_vpc_peering_connection.jumphost]
@@ -326,14 +307,14 @@ resource "aws_route_table_association" "alb" {
 
 # Route Table for GWLB Endpoint Subnets
 resource "aws_route_table" "gwlbe" {
-  count = var.enable_gwlb_inspection ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? 1 : 0
 
   vpc_id = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-gwlbe-rt"
+      Name = "${local.resource_prefix}-gwlbe-rt"
     }
   )
 
@@ -342,7 +323,7 @@ resource "aws_route_table" "gwlbe" {
 
 # Route from GWLBE to Internet Gateway (after inspection)
 resource "aws_route" "gwlbe_to_igw" {
-  count = var.enable_gwlb_inspection ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? 1 : 0
 
   route_table_id         = aws_route_table.gwlbe[0].id
   destination_cidr_block = "0.0.0.0/0"
@@ -353,10 +334,10 @@ resource "aws_route" "gwlbe_to_igw" {
 
 # Route from GWLBE to Jumphost VPC via peering
 resource "aws_route" "gwlbe_to_jumphost" {
-  count = var.enable_gwlb_inspection && var.enable_vpc_peering ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION && local.config.ENABLE_VPC_PEERING ? 1 : 0
 
   route_table_id            = aws_route_table.gwlbe[0].id
-  destination_cidr_block    = var.jumphost_vpc_cidr
+  destination_cidr_block    = local.config.JUMPHOST_VPC_CIDR
   vpc_peering_connection_id = aws_vpc_peering_connection.jumphost[0].id
 
   depends_on = [aws_route_table.gwlbe, aws_vpc_peering_connection.jumphost]
@@ -364,7 +345,7 @@ resource "aws_route" "gwlbe_to_jumphost" {
 
 # Associate GWLBE subnets with route table
 resource "aws_route_table_association" "gwlbe" {
-  count = var.enable_gwlb_inspection ? length(var.availability_zones) : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? length(var.availability_zones) : 0
 
   subnet_id      = aws_subnet.gwlbe[count.index].id
   route_table_id = aws_route_table.gwlbe[0].id
@@ -377,9 +358,9 @@ resource "aws_route_table" "workload" {
   vpc_id = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-workload-rt"
+      Name = "${local.resource_prefix}-workload-rt"
     }
   )
 
@@ -389,7 +370,7 @@ resource "aws_route_table" "workload" {
 # Route from workload to ALB (for return traffic)
 # Workloads should route internet traffic via ALB or NAT Gateway
 resource "aws_route" "workload_default" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.config.ENABLE_NAT_GATEWAY ? 1 : 0
 
   route_table_id         = aws_route_table.workload.id
   destination_cidr_block = "0.0.0.0/0"
@@ -400,10 +381,10 @@ resource "aws_route" "workload_default" {
 
 # Route to Jumphost VPC via peering
 resource "aws_route" "workload_to_jumphost" {
-  count = var.enable_vpc_peering ? 1 : 0
+  count = local.config.ENABLE_VPC_PEERING ? 1 : 0
 
   route_table_id            = aws_route_table.workload.id
-  destination_cidr_block    = var.jumphost_vpc_cidr
+  destination_cidr_block    = local.config.JUMPHOST_VPC_CIDR
   vpc_peering_connection_id = aws_vpc_peering_connection.jumphost[0].id
 
   depends_on = [aws_route_table.workload, aws_vpc_peering_connection.jumphost]
@@ -421,14 +402,14 @@ resource "aws_route_table_association" "workload" {
 
 # IGW Edge Association (Route Table for IGW ingress)
 resource "aws_route_table" "igw_edge" {
-  count = var.enable_gwlb_inspection ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? 1 : 0
 
   vpc_id = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-igw-edge-rt"
+      Name = "${local.resource_prefix}-igw-edge-rt"
     }
   )
 
@@ -437,10 +418,10 @@ resource "aws_route_table" "igw_edge" {
 
 # Route from IGW to ALB subnets via GWLB Endpoint (immediate inspection)
 resource "aws_route" "igw_to_alb_via_gwlbe" {
-  count = var.enable_gwlb_inspection ? length(var.availability_zones) : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? length(var.availability_zones) : 0
 
   route_table_id         = aws_route_table.igw_edge[0].id
-  destination_cidr_block = var.alb_subnet_cidrs[count.index]
+  destination_cidr_block = local.config.ALB_subnet_cidrs[count.index]
   vpc_endpoint_id        = aws_vpc_endpoint.gwlbe[count.index].id
 
   depends_on = [aws_route_table.igw_edge, aws_vpc_endpoint.gwlbe]
@@ -448,7 +429,7 @@ resource "aws_route" "igw_to_alb_via_gwlbe" {
 
 # Associate IGW with edge route table
 resource "aws_route_table_association" "igw_edge" {
-  count = var.enable_gwlb_inspection ? 1 : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? 1 : 0
 
   gateway_id     = local.igw_id
   route_table_id = aws_route_table.igw_edge[0].id
@@ -458,10 +439,10 @@ resource "aws_route_table_association" "igw_edge" {
 
 # Add routes in Jumphost VPC route tables
 resource "aws_route" "jumphost_to_workload" {
-  count = var.enable_vpc_peering ? length(var.jumphost_route_table_ids) : 0
+  count = local.config.ENABLE_VPC_PEERING ? length(local.config.JUMPHOST_ROUTE_TABLE_IDS) : 0
 
-  route_table_id            = var.jumphost_route_table_ids[count.index]
-  destination_cidr_block    = var.vpc_cidr
+  route_table_id            = local.config.JUMPHOST_ROUTE_TABLE_IDS[count.index]
+  destination_cidr_block    = local.config.VPC_CIDR
   vpc_peering_connection_id = aws_vpc_peering_connection.jumphost[0].id
 
   depends_on = [aws_vpc_peering_connection.jumphost]
@@ -472,14 +453,14 @@ resource "aws_route" "jumphost_to_workload" {
 # ============================================================================
 
 resource "aws_eip" "nat" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.config.ENABLE_NAT_GATEWAY ? 1 : 0
 
   domain = "vpc"
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-nat-eip"
+      Name = "${local.resource_prefix}-nat-eip"
     }
   )
 
@@ -487,15 +468,15 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "main" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.config.ENABLE_NAT_GATEWAY ? 1 : 0
 
   allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.alb[0].id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-nat-gw"
+      Name = "${local.resource_prefix}-nat-gw"
     }
   )
 
@@ -508,14 +489,14 @@ resource "aws_nat_gateway" "main" {
 
 # ALB Security Group
 resource "aws_security_group" "alb" {
-  name_prefix = "${var.project_name}-${var.environment}-alb-"
+  name_prefix = "${local.resource_prefix}-alb-"
   description = "Security group for Application Load Balancer"
   vpc_id      = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-alb-sg"
+      Name = "${local.resource_prefix}-alb-sg"
     }
   )
 
@@ -530,10 +511,10 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = aws_security_group.alb.id
   description       = "Allow HTTP from specified CIDRs"
 
-  from_port   = var.alb_listener_port
-  to_port     = var.alb_listener_port
+  from_port   = local.config.ALB_listener_port
+  to_port     = local.config.ALB_listener_port
   ip_protocol = "tcp"
-  cidr_ipv4   = var.allowed_ingress_cidrs[0]
+  cidr_ipv4   = local.config.ALLOWED_INGRESS_CIDRS[0]
 
   depends_on = [aws_security_group.alb]
 }
@@ -542,8 +523,8 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_workload" {
   security_group_id = aws_security_group.alb.id
   description       = "Allow traffic to workload instances"
 
-  from_port                    = var.alb_target_port
-  to_port                      = var.alb_target_port
+  from_port                    = local.config.ALB_target_port
+  to_port                      = local.config.ALB_target_port
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.workload.id
 
@@ -552,14 +533,14 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_workload" {
 
 # Workload Security Group
 resource "aws_security_group" "workload" {
-  name_prefix = "${var.project_name}-${var.environment}-workload-"
+  name_prefix = "${local.resource_prefix}-workload-"
   description = "Security group for workload EC2 instances"
   vpc_id      = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-workload-sg"
+      Name = "${local.resource_prefix}-workload-sg"
     }
   )
 
@@ -574,8 +555,8 @@ resource "aws_vpc_security_group_ingress_rule" "workload_from_alb" {
   security_group_id = aws_security_group.workload.id
   description       = "Allow traffic from ALB"
 
-  from_port                    = var.alb_target_port
-  to_port                      = var.alb_target_port
+  from_port                    = local.config.ALB_target_port
+  to_port                      = local.config.ALB_target_port
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.alb.id
 
@@ -583,7 +564,7 @@ resource "aws_vpc_security_group_ingress_rule" "workload_from_alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "workload_ssh" {
-  count = var.enable_vpc_peering && length(var.ssh_allowed_cidrs) > 0 ? 1 : 0
+  count = local.config.ENABLE_VPC_PEERING && length(local.config.SSH_ALLOWED_CIDRS) > 0 ? 1 : 0
 
   security_group_id = aws_security_group.workload.id
   description       = "Allow SSH from jumphost VPC"
@@ -591,7 +572,7 @@ resource "aws_vpc_security_group_ingress_rule" "workload_ssh" {
   from_port   = 22
   to_port     = 22
   ip_protocol = "tcp"
-  cidr_ipv4   = var.ssh_allowed_cidrs[0]
+  cidr_ipv4   = local.config.SSH_ALLOWED_CIDRS[0]
 
   depends_on = [aws_security_group.workload]
 }
@@ -611,20 +592,20 @@ resource "aws_vpc_security_group_egress_rule" "workload_all" {
 # ============================================================================
 
 resource "aws_lb" "main" {
-  name               = "${var.project_name}-${var.environment}-alb"
-  internal           = var.alb_internal
+  name               = "${local.resource_prefix}-alb"
+  internal           = local.config.ALB_internal
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.alb[*].id
 
-  enable_deletion_protection = var.enable_deletion_protection
+  enable_deletion_protection = local.config.ENABLE_DELETION_PROTECTION
   enable_http2              = true
   enable_cross_zone_load_balancing = true
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-alb"
+      Name = "${local.resource_prefix}-alb"
     }
   )
 
@@ -633,28 +614,28 @@ resource "aws_lb" "main" {
 
 resource "aws_lb_target_group" "main" {
   name_prefix = "wkld-"
-  port        = var.alb_target_port
-  protocol    = var.alb_target_protocol
+  port        = local.config.ALB_target_port
+  protocol    = local.config.ALB_target_protocol
   vpc_id      = local.vpc_id
   target_type = "instance"
 
   health_check {
     enabled             = true
-    healthy_threshold   = var.alb_healthy_threshold
-    unhealthy_threshold = var.alb_unhealthy_threshold
-    timeout             = var.alb_health_check_timeout
-    interval            = var.alb_health_check_interval
-    path                = var.alb_health_check_path
-    protocol            = var.alb_target_protocol
+    healthy_threshold   = local.config.ALB_healthy_threshold
+    unhealthy_threshold = local.config.ALB_unhealthy_threshold
+    timeout             = local.config.ALB_health_check_timeout
+    interval            = local.config.ALB_health_check_interval
+    path                = local.config.ALB_health_check_path
+    protocol            = local.config.ALB_target_protocol
     matcher             = "200"
   }
 
   deregistration_delay = 30
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-tg"
+      Name = "${local.resource_prefix}-tg"
     }
   )
 
@@ -667,9 +648,9 @@ resource "aws_lb_target_group" "main" {
 
 resource "aws_lb_listener" "main" {
   load_balancer_arn = aws_lb.main.arn
-  port              = var.alb_listener_port
-  protocol          = var.alb_listener_protocol
-  certificate_arn   = var.alb_listener_protocol == "HTTPS" ? var.alb_certificate_arn : null
+  port              = local.config.ALB_listener_port
+  protocol          = local.config.ALB_listener_protocol
+  certificate_arn   = local.config.ALB_listener_protocol == "HTTPS" ? local.config.ALB_certificate_arn : null
 
   default_action {
     type             = "forward"
@@ -684,11 +665,11 @@ resource "aws_lb_listener" "main" {
 # ============================================================================
 
 resource "aws_instance" "workload" {
-  count = var.workload_count
+  count = local.config.WORKLOAD_COUNT
 
   ami           = local.ami_id
-  instance_type = var.workload_instance_type
-  key_name      = var.workload_key_name != "" ? var.workload_key_name : null
+  instance_type = local.config.WORKLOAD_INSTANCE_TYPE
+  key_name      = local.config.WORKLOAD_KEY_NAME != "" ? local.config.WORKLOAD_KEY_NAME : null
   
   # Distribute instances across AZs
   subnet_id = aws_subnet.workload[count.index % length(var.availability_zones)].id
@@ -697,11 +678,11 @@ resource "aws_instance" "workload" {
   
   user_data = local.workload_user_data_final
   
-  monitoring = var.enable_detailed_monitoring
+  monitoring = local.config.ENABLE_DETAILED_MONITORING
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = var.workload_root_volume_size
+    volume_size           = local.config.WORKLOAD_root_volume_size
     delete_on_termination = true
     encrypted             = true
   }
@@ -714,9 +695,9 @@ resource "aws_instance" "workload" {
   }
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-workload-${count.index + 1}"
+      Name = "${local.resource_prefix}-workload-${count.index + 1}"
     }
   )
 
@@ -729,11 +710,11 @@ resource "aws_instance" "workload" {
 
 # Register workload instances with target group
 resource "aws_lb_target_group_attachment" "workload" {
-  count = var.workload_count
+  count = local.config.WORKLOAD_COUNT
 
   target_group_arn = aws_lb_target_group.main.arn
   target_id        = aws_instance.workload[count.index].id
-  port             = var.alb_target_port
+  port             = local.config.ALB_target_port
 
   depends_on = [aws_instance.workload, aws_lb_target_group.main]
 }
@@ -743,16 +724,16 @@ resource "aws_lb_target_group_attachment" "workload" {
 # ============================================================================
 
 resource "aws_cloudwatch_log_group" "flow_logs" {
-  count = var.enable_flow_logs ? 1 : 0
+  count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
   name              = "/aws/vpc/${var.project_name}-${var.environment}-flow-logs"
-  retention_in_days = var.flow_logs_retention_days
+  retention_in_days = local.config.FLOW_LOGS_RETENTION_DAYS
 
-  tags = local.common_tags
+  tags = local.tags
 }
 
 resource "aws_iam_role" "flow_logs" {
-  count = var.enable_flow_logs ? 1 : 0
+  count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
   name_prefix = "${var.project_name}-flow-logs-"
 
@@ -769,11 +750,11 @@ resource "aws_iam_role" "flow_logs" {
     ]
   })
 
-  tags = local.common_tags
+  tags = local.tags
 }
 
 resource "aws_iam_role_policy" "flow_logs" {
-  count = var.enable_flow_logs ? 1 : 0
+  count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
   name = "flow-logs-policy"
   role = aws_iam_role.flow_logs[0].id
@@ -797,7 +778,7 @@ resource "aws_iam_role_policy" "flow_logs" {
 }
 
 resource "aws_flow_log" "main" {
-  count = var.enable_flow_logs ? 1 : 0
+  count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
   iam_role_arn    = aws_iam_role.flow_logs[0].arn
   log_destination = aws_cloudwatch_log_group.flow_logs[0].arn
@@ -805,9 +786,9 @@ resource "aws_flow_log" "main" {
   vpc_id          = local.vpc_id
 
   tags = merge(
-    local.common_tags,
+    local.tags,
     {
-      Name = "${var.project_name}-${var.environment}-flow-logs"
+      Name = "${local.resource_prefix}-flow-logs"
     }
   )
 
