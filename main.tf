@@ -101,7 +101,7 @@ locals {
 HTML
   EOF
 
-  workload_user_data_final = local.config.WORKLOAD_user_data != "" ? local.config.WORKLOAD_user_data : local.default_user_data
+  workload_user_data_final = local.config.WORKLOAD_USER_DATA != "" ? local.config.WORKLOAD_USER_DATA : local.default_user_data
 }
 
 # ============================================================================
@@ -297,7 +297,7 @@ resource "aws_route" "alb_to_jumphost" {
 
 # Associate ALB subnets with route table
 resource "aws_route_table_association" "alb" {
-  count = length(var.availability_zones)
+  count = length(local.config.AVAILABILITY_ZONES)
 
   subnet_id      = aws_subnet.alb[count.index].id
   route_table_id = aws_route_table.alb.id
@@ -345,7 +345,7 @@ resource "aws_route" "gwlbe_to_jumphost" {
 
 # Associate GWLBE subnets with route table
 resource "aws_route_table_association" "gwlbe" {
-  count = local.config.ENABLE_GWLB_INSPECTION ? length(var.availability_zones) : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? length(local.config.AVAILABILITY_ZONES) : 0
 
   subnet_id      = aws_subnet.gwlbe[count.index].id
   route_table_id = aws_route_table.gwlbe[0].id
@@ -392,7 +392,7 @@ resource "aws_route" "workload_to_jumphost" {
 
 # Associate workload subnets with route table
 resource "aws_route_table_association" "workload" {
-  count = length(var.availability_zones)
+  count = length(local.config.AVAILABILITY_ZONES)
 
   subnet_id      = aws_subnet.workload[count.index].id
   route_table_id = aws_route_table.workload.id
@@ -418,10 +418,10 @@ resource "aws_route_table" "igw_edge" {
 
 # Route from IGW to ALB subnets via GWLB Endpoint (immediate inspection)
 resource "aws_route" "igw_to_alb_via_gwlbe" {
-  count = local.config.ENABLE_GWLB_INSPECTION ? length(var.availability_zones) : 0
+  count = local.config.ENABLE_GWLB_INSPECTION ? length(local.config.AVAILABILITY_ZONES) : 0
 
   route_table_id         = aws_route_table.igw_edge[0].id
-  destination_cidr_block = local.config.ALB_subnet_cidrs[count.index]
+  destination_cidr_block = local.config.ALB_SUBNET_CIDRS[count.index]
   vpc_endpoint_id        = aws_vpc_endpoint.gwlbe[count.index].id
 
   depends_on = [aws_route_table.igw_edge, aws_vpc_endpoint.gwlbe]
@@ -511,8 +511,8 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = aws_security_group.alb.id
   description       = "Allow HTTP from specified CIDRs"
 
-  from_port   = local.config.ALB_listener_port
-  to_port     = local.config.ALB_listener_port
+  from_port   = local.config.ALB_LISTENER_PORT
+  to_port     = local.config.ALB_LISTENER_PORT
   ip_protocol = "tcp"
   cidr_ipv4   = local.config.ALLOWED_INGRESS_CIDRS[0]
 
@@ -523,8 +523,8 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_workload" {
   security_group_id = aws_security_group.alb.id
   description       = "Allow traffic to workload instances"
 
-  from_port                    = local.config.ALB_target_port
-  to_port                      = local.config.ALB_target_port
+  from_port                    = local.config.ALB_TARGET_PORT
+  to_port                      = local.config.ALB_TARGET_PORT
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.workload.id
 
@@ -555,8 +555,8 @@ resource "aws_vpc_security_group_ingress_rule" "workload_from_alb" {
   security_group_id = aws_security_group.workload.id
   description       = "Allow traffic from ALB"
 
-  from_port                    = local.config.ALB_target_port
-  to_port                      = local.config.ALB_target_port
+  from_port                    = local.config.ALB_TARGET_PORT
+  to_port                      = local.config.ALB_TARGET_PORT
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.alb.id
 
@@ -593,7 +593,7 @@ resource "aws_vpc_security_group_egress_rule" "workload_all" {
 
 resource "aws_lb" "main" {
   name               = "${local.resource_prefix}-alb"
-  internal           = local.config.ALB_internal
+  internal           = local.config.ALB_INTERNAL
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.alb[*].id
@@ -614,19 +614,19 @@ resource "aws_lb" "main" {
 
 resource "aws_lb_target_group" "main" {
   name_prefix = "wkld-"
-  port        = local.config.ALB_target_port
-  protocol    = local.config.ALB_target_protocol
+  port        = local.config.ALB_TARGET_PORT
+  protocol    = local.config.ALB_TARGET_PROTOCOL
   vpc_id      = local.vpc_id
   target_type = "instance"
 
   health_check {
     enabled             = true
-    healthy_threshold   = local.config.ALB_healthy_threshold
-    unhealthy_threshold = local.config.ALB_unhealthy_threshold
-    timeout             = local.config.ALB_health_check_timeout
-    interval            = local.config.ALB_health_check_interval
-    path                = local.config.ALB_health_check_path
-    protocol            = local.config.ALB_target_protocol
+    healthy_threshold   = local.config.ALB_HEALTHY_THRESHOLD
+    unhealthy_threshold = local.config.ALB_UNHEALTHY_THRESHOLD
+    timeout             = local.config.ALB_HEALTH_CHECK_TIMEOUT
+    interval            = local.config.ALB_HEALTH_CHECK_INTERVAL
+    path                = local.config.ALB_HEALTH_CHECK_PATH
+    protocol            = local.config.ALB_TARGET_PROTOCOL
     matcher             = "200"
   }
 
@@ -648,9 +648,9 @@ resource "aws_lb_target_group" "main" {
 
 resource "aws_lb_listener" "main" {
   load_balancer_arn = aws_lb.main.arn
-  port              = local.config.ALB_listener_port
-  protocol          = local.config.ALB_listener_protocol
-  certificate_arn   = local.config.ALB_listener_protocol == "HTTPS" ? local.config.ALB_certificate_arn : null
+  port              = local.config.ALB_LISTENER_PORT
+  protocol          = local.config.ALB_LISTENER_PROTOCOL
+  certificate_arn   = local.config.ALB_LISTENER_PROTOCOL == "HTTPS" ? local.config.ALB_CERTIFICATE_ARN : null
 
   default_action {
     type             = "forward"
@@ -672,7 +672,7 @@ resource "aws_instance" "workload" {
   key_name      = local.config.WORKLOAD_KEY_NAME != "" ? local.config.WORKLOAD_KEY_NAME : null
   
   # Distribute instances across AZs
-  subnet_id = aws_subnet.workload[count.index % length(var.availability_zones)].id
+  subnet_id = aws_subnet.workload[count.index % length(local.config.AVAILABILITY_ZONES)].id
   
   vpc_security_group_ids = [aws_security_group.workload.id]
   
@@ -682,7 +682,7 @@ resource "aws_instance" "workload" {
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = local.config.WORKLOAD_root_volume_size
+    volume_size           = local.config.WORKLOAD_ROOT_VOLUME_SIZE
     delete_on_termination = true
     encrypted             = true
   }
@@ -714,7 +714,7 @@ resource "aws_lb_target_group_attachment" "workload" {
 
   target_group_arn = aws_lb_target_group.main.arn
   target_id        = aws_instance.workload[count.index].id
-  port             = local.config.ALB_target_port
+  port             = local.config.ALB_TARGET_PORT
 
   depends_on = [aws_instance.workload, aws_lb_target_group.main]
 }
@@ -726,7 +726,7 @@ resource "aws_lb_target_group_attachment" "workload" {
 resource "aws_cloudwatch_log_group" "flow_logs" {
   count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
-  name              = "/aws/vpc/${var.project_name}-${var.environment}-flow-logs"
+  name              = "/aws/vpc/${local.resource_prefix}-flow-logs"
   retention_in_days = local.config.FLOW_LOGS_RETENTION_DAYS
 
   tags = local.tags
@@ -735,7 +735,7 @@ resource "aws_cloudwatch_log_group" "flow_logs" {
 resource "aws_iam_role" "flow_logs" {
   count = local.config.ENABLE_FLOW_LOGS ? 1 : 0
 
-  name_prefix = "${var.project_name}-flow-logs-"
+  name_prefix = "${local.resource_prefix}-flow-logs-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

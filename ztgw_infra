@@ -53,28 +53,31 @@ print_info() {
 check_prerequisites() {
     print_header "Checking Prerequisites"
     
-    # Check Terraform
+    # Check Terraform (REQUIRED)
     if ! command -v terraform &> /dev/null; then
         print_error "Terraform is not installed. Please install Terraform >= 1.0"
         exit 1
     fi
     print_success "Terraform $(terraform version | head -1 | awk '{print $2}')"
     
-    # Check AWS CLI
-    if ! command -v aws &> /dev/null; then
-        print_error "AWS CLI is not installed. Please install AWS CLI v2"
-        exit 1
-    fi
-    print_success "AWS CLI $(aws --version | awk '{print $1}' | cut -d'/' -f2)"
-    
-    # Check AWS credentials
-    if ! aws sts get-caller-identity &> /dev/null; then
-        print_error "AWS credentials not configured. Run 'aws configure'"
-        exit 1
+    # Check AWS CLI (OPTIONAL)
+    if command -v aws &> /dev/null; then
+        print_success "AWS CLI $(aws --version | awk '{print $1}' | cut -d'/' -f2 2>/dev/null || echo 'found')"
+    else
+        print_info "AWS CLI not found - using credentials from config.yaml (this is fine)"
     fi
     
-    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-    print_success "AWS Account: $ACCOUNT_ID"
+    # Check AWS credentials (optional - will be validated during terraform apply)
+    if command -v aws &> /dev/null; then
+        if aws sts get-caller-identity &> /dev/null 2>&1; then
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "N/A")
+            if [ "$ACCOUNT_ID" != "N/A" ]; then
+                print_success "AWS CLI configured - Account: $ACCOUNT_ID"
+            fi
+        fi
+    else
+        print_info "AWS CLI not found - will use credentials from config.yaml"
+    fi
     
     # Check for configuration file
     if [ ! -f "config.yaml" ]; then
