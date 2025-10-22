@@ -79,7 +79,7 @@ locals {
   name_prefix    = local.config.NAME_PREFIX
   environment    = local.config.ENVIRONMENT
   aws_region     = local.config.AWS_REGION
-  aws_account_id = local.config.AWS_ACCOUNT_ID
+  aws_account_id = try(local.config.AWS_ACCOUNT_ID, "")
 
   # Common tags
   tags = merge(

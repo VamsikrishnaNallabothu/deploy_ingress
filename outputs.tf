@@ -13,12 +13,12 @@ output "vpc_id" {
 
 output "vpc_cidr" {
   description = "CIDR block of the application VPC"
-  value       = var.create_vpc ? aws_vpc.main[0].cidr_block : data.aws_vpc.existing[0].cidr_block
+  value       = local.config.CREATE_VPC ? aws_vpc.main[0].cidr_block : data.aws_vpc.existing[0].cidr_block
 }
 
 output "availability_zones" {
   description = "Availability zones used for deployment"
-  value       = var.availability_zones
+  value       = local.config.AVAILABILITY_ZONES
 }
 
 # ============================================================================
@@ -61,17 +61,17 @@ output "workload_subnet_cidrs" {
 
 output "gwlb_endpoint_ids" {
   description = "IDs of GWLB Endpoints"
-  value       = var.enable_gwlb_inspection ? aws_vpc_endpoint.gwlbe[*].id : []
+  value       = local.config.ENABLE_GWLB_INSPECTION ? aws_vpc_endpoint.gwlbe[*].id : []
 }
 
 output "gwlb_endpoint_network_interface_ids" {
   description = "Network interface IDs of GWLB Endpoints"
-  value       = var.enable_gwlb_inspection ? aws_vpc_endpoint.gwlbe[*].network_interface_ids : []
+  value       = local.config.ENABLE_GWLB_INSPECTION ? aws_vpc_endpoint.gwlbe[*].network_interface_ids : []
 }
 
 output "gwlb_inspection_enabled" {
   description = "Whether GWLB inspection is enabled"
-  value       = var.enable_gwlb_inspection
+  value       = local.config.ENABLE_GWLB_INSPECTION
 }
 
 # ============================================================================
@@ -110,7 +110,7 @@ output "alb_security_group_id" {
 
 output "alb_url" {
   description = "URL to access the Application Load Balancer"
-  value       = "${var.alb_listener_protocol == "HTTPS" ? "https" : "http"}://${aws_lb.main.dns_name}"
+  value       = "${local.config.ALB_LISTENER_PROTOCOL == "HTTPS" ? "https" : "http"}://${aws_lb.main.dns_name}"
 }
 
 # ============================================================================
@@ -139,7 +139,7 @@ output "workload_subnet_assignments" {
 
 output "workload_count" {
   description = "Number of workload instances deployed"
-  value       = var.workload_count
+  value       = local.config.WORKLOAD_COUNT
 }
 
 output "workload_security_group_id" {
@@ -167,22 +167,22 @@ output "workload_details" {
 
 output "vpc_peering_connection_id" {
   description = "ID of the VPC peering connection to jumphost VPC"
-  value       = var.enable_vpc_peering ? aws_vpc_peering_connection.jumphost[0].id : null
+  value       = local.config.ENABLE_VPC_PEERING ? aws_vpc_peering_connection.jumphost[0].id : null
 }
 
 output "vpc_peering_enabled" {
   description = "Whether VPC peering is enabled"
-  value       = var.enable_vpc_peering
+  value       = local.config.ENABLE_VPC_PEERING
 }
 
 output "jumphost_vpc_id" {
   description = "ID of the jumphost VPC (if peering is enabled)"
-  value       = var.enable_vpc_peering ? var.jumphost_vpc_id : null
+  value       = local.config.ENABLE_VPC_PEERING ? local.config.JUMPHOST_VPC_ID : null
 }
 
 output "jumphost_vpc_cidr" {
   description = "CIDR block of the jumphost VPC (if peering is enabled)"
-  value       = var.enable_vpc_peering ? var.jumphost_vpc_cidr : null
+  value       = local.config.ENABLE_VPC_PEERING ? local.config.JUMPHOST_VPC_CIDR : null
 }
 
 # ============================================================================
@@ -196,7 +196,7 @@ output "alb_route_table_id" {
 
 output "gwlbe_route_table_id" {
   description = "ID of the GWLB Endpoint route table"
-  value       = var.enable_gwlb_inspection ? aws_route_table.gwlbe[0].id : null
+  value       = local.config.ENABLE_GWLB_INSPECTION ? aws_route_table.gwlbe[0].id : null
 }
 
 output "workload_route_table_id" {
@@ -206,7 +206,7 @@ output "workload_route_table_id" {
 
 output "igw_edge_route_table_id" {
   description = "ID of the IGW edge route table"
-  value       = var.enable_gwlb_inspection ? aws_route_table.igw_edge[0].id : null
+  value       = local.config.ENABLE_GWLB_INSPECTION ? aws_route_table.igw_edge[0].id : null
 }
 
 # ============================================================================
@@ -224,12 +224,12 @@ output "internet_gateway_id" {
 
 output "nat_gateway_id" {
   description = "ID of the NAT Gateway (if enabled)"
-  value       = var.enable_nat_gateway ? aws_nat_gateway.main[0].id : null
+  value       = local.config.ENABLE_NAT_GATEWAY ? aws_nat_gateway.main[0].id : null
 }
 
 output "nat_gateway_public_ip" {
   description = "Public IP of the NAT Gateway (if enabled)"
-  value       = var.enable_nat_gateway ? aws_eip.nat[0].public_ip : null
+  value       = local.config.ENABLE_NAT_GATEWAY ? aws_eip.nat[0].public_ip : null
 }
 
 # ============================================================================
@@ -238,12 +238,12 @@ output "nat_gateway_public_ip" {
 
 output "flow_logs_log_group_name" {
   description = "CloudWatch log group name for VPC Flow Logs"
-  value       = var.enable_flow_logs ? aws_cloudwatch_log_group.flow_logs[0].name : null
+  value       = local.config.ENABLE_FLOW_LOGS ? aws_cloudwatch_log_group.flow_logs[0].name : null
 }
 
 output "flow_logs_enabled" {
   description = "Whether VPC Flow Logs are enabled"
-  value       = var.enable_flow_logs
+  value       = local.config.ENABLE_FLOW_LOGS
 }
 
 # ============================================================================
@@ -252,10 +252,10 @@ output "flow_logs_enabled" {
 
 output "ssh_connection_info" {
   description = "SSH connection information for workload instances (via jumphost)"
-  value = var.enable_vpc_peering && var.workload_count > 0 ? {
+  value = local.config.ENABLE_VPC_PEERING && local.config.WORKLOAD_COUNT > 0 ? {
     instructions = "Connect from jumphost VPC using: ssh -i <key-file> ec2-user@<workload-ip>"
     workload_ips = aws_instance.workload[*].private_ip
-    key_name     = var.workload_key_name
+    key_name     = local.config.WORKLOAD_KEY_NAME
   } : null
 }
 
@@ -263,10 +263,10 @@ output "test_commands" {
   description = "Commands to test the architecture"
   value = {
     test_alb                = "curl ${aws_lb.main.dns_name}"
-    test_alb_https          = var.alb_listener_protocol == "HTTPS" ? "curl https://${aws_lb.main.dns_name}" : "N/A - HTTP listener configured"
+    test_alb_https          = local.config.ALB_LISTENER_PROTOCOL == "HTTPS" ? "curl https://${aws_lb.main.dns_name}" : "N/A - HTTP listener configured"
     check_target_health     = "aws elbv2 describe-target-health --target-group-arn ${aws_lb_target_group.main.arn}"
-    view_flow_logs          = var.enable_flow_logs ? "aws logs tail ${aws_cloudwatch_log_group.flow_logs[0].name} --follow" : "N/A - Flow logs not enabled"
-    ssh_to_workload_example = var.enable_vpc_peering && var.workload_count > 0 ? "ssh -i ~/.ssh/${var.workload_key_name}.pem ec2-user@${aws_instance.workload[0].private_ip}" : "N/A"
+    view_flow_logs          = local.config.ENABLE_FLOW_LOGS ? "aws logs tail ${aws_cloudwatch_log_group.flow_logs[0].name} --follow" : "N/A - Flow logs not enabled"
+    ssh_to_workload_example = local.config.ENABLE_VPC_PEERING && local.config.WORKLOAD_COUNT > 0 ? "ssh -i ~/.ssh/${local.config.WORKLOAD_KEY_NAME}.pem ec2-user@${aws_instance.workload[0].private_ip}" : "N/A"
   }
 }
 
@@ -278,14 +278,14 @@ output "architecture_summary" {
   description = "Summary of the deployed architecture"
   value = {
     architecture_type     = "Ingress Inspection (IGW → GWLB Endpoint → Firewall → ALB → Workloads)"
-    vpc_cidr              = var.create_vpc ? aws_vpc.main[0].cidr_block : data.aws_vpc.existing[0].cidr_block
-    availability_zones    = var.availability_zones
-    workload_count        = var.workload_count
-    gwlb_inspection       = var.enable_gwlb_inspection ? "Enabled" : "Disabled"
-    vpc_peering           = var.enable_vpc_peering ? "Enabled (Jumphost access)" : "Disabled"
-    nat_gateway           = var.enable_nat_gateway ? "Enabled" : "Disabled"
-    flow_logs             = var.enable_flow_logs ? "Enabled" : "Disabled"
-    alb_endpoint          = "${var.alb_listener_protocol == "HTTPS" ? "https" : "http"}://${aws_lb.main.dns_name}"
+    vpc_cidr              = local.config.CREATE_VPC ? aws_vpc.main[0].cidr_block : data.aws_vpc.existing[0].cidr_block
+    availability_zones    = local.config.AVAILABILITY_ZONES
+    workload_count        = local.config.WORKLOAD_COUNT
+    gwlb_inspection       = local.config.ENABLE_GWLB_INSPECTION ? "Enabled" : "Disabled"
+    vpc_peering           = local.config.ENABLE_VPC_PEERING ? "Enabled (Jumphost access)" : "Disabled"
+    nat_gateway           = local.config.ENABLE_NAT_GATEWAY ? "Enabled" : "Disabled"
+    flow_logs             = local.config.ENABLE_FLOW_LOGS ? "Enabled" : "Disabled"
+    alb_endpoint          = "${local.config.ALB_LISTENER_PROTOCOL == "HTTPS" ? "https" : "http"}://${aws_lb.main.dns_name}"
   }
 }
 
@@ -296,11 +296,11 @@ output "architecture_summary" {
 output "deployment_info" {
   description = "Information about the deployment"
   value = {
-    project_name        = var.project_name
-    environment         = var.environment
-    region              = var.aws_region
+    project_name        = local.name_prefix
+    environment         = local.environment
+    region              = local.aws_region
     terraform_workspace = terraform.workspace
-    deployment_mode     = var.create_vpc ? "Greenfield (New VPC)" : "Brownfield (Existing VPC)"
+    deployment_mode     = local.config.CREATE_VPC ? "Greenfield (New VPC)" : "Brownfield (Existing VPC)"
   }
 }
 
@@ -313,12 +313,12 @@ output "next_steps" {
   value = [
     "1. Test ALB connectivity: curl ${aws_lb.main.dns_name}",
     "2. Verify target health: aws elbv2 describe-target-health --target-group-arn ${aws_lb_target_group.main.arn}",
-    var.enable_gwlb_inspection ? "3. Check GWLB endpoint status: aws ec2 describe-vpc-endpoints --vpc-endpoint-ids ${join(" ", aws_vpc_endpoint.gwlbe[*].id)}" : "3. GWLB inspection disabled - enable for production use",
-    var.enable_vpc_peering ? "4. Test SSH access from jumphost: ssh -i ~/.ssh/${var.workload_key_name}.pem ec2-user@${var.workload_count > 0 ? aws_instance.workload[0].private_ip : "<workload-ip>"}" : "4. VPC peering not enabled - enable for jumphost access",
-    var.enable_flow_logs ? "5. Monitor VPC Flow Logs: aws logs tail ${aws_cloudwatch_log_group.flow_logs[0].name} --follow" : "5. Enable VPC Flow Logs for traffic analysis",
+    local.config.ENABLE_GWLB_INSPECTION ? "3. Check GWLB endpoint status: aws ec2 describe-vpc-endpoints --vpc-endpoint-ids ${join(" ", aws_vpc_endpoint.gwlbe[*].id)}" : "3. GWLB inspection disabled - enable for production use",
+    local.config.ENABLE_VPC_PEERING ? "4. Test SSH access from jumphost: ssh -i ~/.ssh/${local.config.WORKLOAD_KEY_NAME}.pem ec2-user@${local.config.WORKLOAD_COUNT > 0 ? aws_instance.workload[0].private_ip : "<workload-ip>"}" : "4. VPC peering not enabled - enable for jumphost access",
+    local.config.ENABLE_FLOW_LOGS ? "5. Monitor VPC Flow Logs: aws logs tail ${aws_cloudwatch_log_group.flow_logs[0].name} --follow" : "5. Enable VPC Flow Logs for traffic analysis",
     "6. Configure DNS record pointing to: ${aws_lb.main.dns_name}",
     "7. Review security group rules and tighten as needed",
-    var.enable_gwlb_inspection ? "8. Verify firewall rules in GWLB target instances" : "8. Configure GWLB endpoints before production use"
+    local.config.ENABLE_GWLB_INSPECTION ? "8. Verify firewall rules in GWLB target instances" : "8. Configure GWLB endpoints before production use"
   ]
 }
 
