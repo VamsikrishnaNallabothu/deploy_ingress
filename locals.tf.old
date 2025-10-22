@@ -1,0 +1,49 @@
+locals {
+  # Load configuration from YAML file
+  config = yamldecode(file("${path.module}/config.yaml"))
+  
+  # Extract configuration values with defaults
+  region             = local.config.AWS_REGION
+  availability_zones = local.config.AVAILABILITY_ZONES
+  
+  # VPC CIDRs
+  inspection_vpc_cidr = local.config.INSPECTION_VPC_CIDR
+  vpc_a_cidr         = local.config.WORKLOAD_VPC_A_CIDR
+  vpc_b_cidr         = local.config.WORKLOAD_VPC_B_CIDR
+  
+  # GWLB Endpoint Service
+  gwlb_service_name = local.config.GWLB_ENDPOINT_SERVICE_NAME
+  
+  # Tags
+  tags = local.config.TAGS
+  
+  # Optional parameters with defaults
+  nlb_listener_port = try(local.config.NLB_LISTENER_PORT, 80)
+  nlb_target_port   = try(local.config.NLB_TARGET_PORT, 80)
+  tgw_asn          = try(local.config.TGW_ASN, 64512)
+  
+  # Auto-calculate subnet CIDRs if not provided
+  inspection_subnets = try(local.config.INSPECTION_VPC_SUBNETS, {
+    nlb_az1    = cidrsubnet(local.inspection_vpc_cidr, 8, 1)
+    nlb_az2    = cidrsubnet(local.inspection_vpc_cidr, 8, 2)
+    gwlbe_az1  = cidrsubnet(local.inspection_vpc_cidr, 8, 11)
+    gwlbe_az2  = cidrsubnet(local.inspection_vpc_cidr, 8, 12)
+    tgw_az1    = cidrsubnet(local.inspection_vpc_cidr, 8, 21)
+    tgw_az2    = cidrsubnet(local.inspection_vpc_cidr, 8, 22)
+  })
+  
+  vpc_a_subnets = try(local.config.WORKLOAD_VPC_A_SUBNETS, {
+    workload_az1 = cidrsubnet(local.vpc_a_cidr, 8, 1)
+    workload_az2 = cidrsubnet(local.vpc_a_cidr, 8, 2)
+    tgw_az1      = cidrsubnet(local.vpc_a_cidr, 8, 11)
+    tgw_az2      = cidrsubnet(local.vpc_a_cidr, 8, 12)
+  })
+  
+  vpc_b_subnets = try(local.config.WORKLOAD_VPC_B_SUBNETS, {
+    workload_az1 = cidrsubnet(local.vpc_b_cidr, 8, 1)
+    workload_az2 = cidrsubnet(local.vpc_b_cidr, 8, 2)
+    tgw_az1      = cidrsubnet(local.vpc_b_cidr, 8, 11)
+    tgw_az2      = cidrsubnet(local.vpc_b_cidr, 8, 12)
+  })
+}
+

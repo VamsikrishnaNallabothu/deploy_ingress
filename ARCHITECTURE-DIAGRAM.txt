@@ -1,0 +1,420 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              AWS INGRESS INSPECTION ARCHITECTURE - DETAILED VIEW             ║
+║                    Internet → GWLB → Firewall → ALB → Workloads             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+                              ┌─────────────────┐
+                              │    INTERNET     │
+                              │    0.0.0.0/0    │
+                              └────────┬────────┘
+                                       │
+                          [HTTP/HTTPS Requests]
+                                       │
+╔══════════════════════════════════════▼═══════════════════════════════════════╗
+║                        APPLICATION VPC (10.0.0.0/16)                         ║
+║  ┌───────────────────────────────────────────────────────────────────────┐  ║
+║  │                    Internet Gateway (IGW)                             │  ║
+║  │                                                                        │  ║
+║  │  ┌──────────────────────────────────────────────────────────────┐   │  ║
+║  │  │          IGW Edge Route Table (Inspection Enforcement)        │   │  ║
+║  │  │  • 10.0.1.0/24  → GWLB Endpoint AZ-1                         │   │  ║
+║  │  │  • 10.0.2.0/24  → GWLB Endpoint AZ-2                         │   │  ║
+║  │  └──────────────────────────────────────────────────────────────┘   │  ║
+║  └──────────────────────────────┬────────────────────────────────────────┘  ║
+║                                 │                                            ║
+║  ┌──────────────────────────────┴──────────────────────────────┐            ║
+║  │                                                               │            ║
+║  │  ╔═══════════════════════════════════════════════════════╗  │            ║
+║  │  ║         PUBLIC SUBNET TIER (ALB)                      ║  │            ║
+║  │  ║  ┌─────────────────────┬─────────────────────┐       ║  │            ║
+║  │  ║  │   ALB Subnet AZ-1   │   ALB Subnet AZ-2   │       ║  │            ║
+║  │  ║  │    10.0.1.0/24      │    10.0.2.0/24      │       ║  │            ║
+║  │  ║  │                     │                     │       ║  │            ║
+║  │  ║  │ ┌─────────────────────────────────────┐  │       ║  │            ║
+║  │  ║  │ │  Application Load Balancer (ALB)   │  │       ║  │            ║
+║  │  ║  │ │  • Internet-Facing                 │  │       ║  │            ║
+║  │  ║  │ │  • Listener: HTTP/HTTPS            │  │       ║  │            ║
+║  │  ║  │ │  • Target: Workload Instances      │  │       ║  │            ║
+║  │  ║  │ └─────────────────────────────────────┘  │       ║  │            ║
+║  │  ║  │           │                     │         │       ║  │            ║
+║  │  ║  └───────────┼─────────────────────┼─────────┘       ║  │            ║
+║  │  ║              │                     │                 ║  │            ║
+║  │  ║  Route Table: 0.0.0.0/0 → GWLB Endpoint            ║  │            ║
+║  │  ║               Jumphost CIDR → VPC Peering           ║  │            ║
+║  │  ╚══════════════▼═════════════════════▼═══════════════╝  │            ║
+║  │                 │                     │                   │            ║
+║  │                 │                     │                   │            ║
+║  │  ╔══════════════▼═════════════════════▼═══════════════╗  │            ║
+║  │  ║       GWLB ENDPOINT SUBNET TIER                    ║  │            ║
+║  │  ║  ┌────────────────────┬─────────────────────┐      ║  │            ║
+║  │  ║  │  GWLB-EP Subnet    │  GWLB-EP Subnet    │      ║  │            ║
+║  │  ║  │  AZ-1              │  AZ-2              │      ║  │            ║
+║  │  ║  │  10.0.11.0/24      │  10.0.12.0/24      │      ║  │            ║
+║  │  ║  │                    │                    │      ║  │            ║
+║  │  ║  │  ┌──────────────┐  │  ┌──────────────┐  │      ║  │            ║
+║  │  ║  │  │ GWLB Endpoint│  │  │ GWLB Endpoint│  │      ║  │            ║
+║  │  ║  │  │   (vpce-1)   │  │  │   (vpce-2)   │  │      ║  │            ║
+║  │  ║  │  └──────┬───────┘  │  └──────┬───────┘  │      ║  │            ║
+║  │  ║  │         │           │         │          │      ║  │            ║
+║  │  ║  └─────────┼───────────┴─────────┼──────────┘      ║  │            ║
+║  │  ║            │    [GENEVE           │                ║  │            ║
+║  │  ║            │   Encapsulation]     │                ║  │            ║
+║  │  ║            │                      │                ║  │            ║
+║  │  ║  Route Table: 0.0.0.0/0 → IGW                     ║  │            ║
+║  │  ║               Jumphost CIDR → VPC Peering          ║  │            ║
+║  │  ╚════════════▼══════════════════════▼════════════════╝  │            ║
+║  │               │                      │                   │            ║
+║  │               └──────────┬───────────┘                   │            ║
+║  └──────────────────────────┼───────────────────────────────┘            ║
+╚════════════════════════════▼═════════════════════════════════════════════╝
+                             │
+           ┌─────────────────┴──────────────────┐
+           │   VPC Endpoint Service Connection  │
+           │        (Cross-Account Link)        │
+           └─────────────────┬──────────────────┘
+                             │
+╔════════════════════════════▼═════════════════════════════════════════════╗
+║                   SECURITY ACCOUNT (Firewall Account)                    ║
+║  ┌──────────────────────────────────────────────────────────────────┐   ║
+║  │               Gateway Load Balancer (GWLB)                       │   ║
+║  │           (Pre-existing in Security Account)                     │   ║
+║  │                                                                  │   ║
+║  │  • Service Name: com.amazonaws.vpce.region.vpce-svc-xxxxx      │   ║
+║  │  • Endpoint Service: Published for cross-account access         │   ║
+║  │  • Health Checks: Monitor firewall instances                    │   ║
+║  └────────────┬──────────────────────────────────┬─────────────────┘   ║
+║               │                                  │                      ║
+║  ┌────────────▼──────────┬──────────────────────▼─────────────┐        ║
+║  │   Firewall Instance 1 │   Firewall Instance 2              │        ║
+║  │   (AZ-1)              │   (AZ-2)                           │        ║
+║  │                       │                                    │        ║
+║  │  • Stateful Firewall  │  • Stateful Firewall               │        ║
+║  │  • IDS/IPS            │  • IDS/IPS                         │        ║
+║  │  • Threat Prevention  │  • Threat Prevention               │        ║
+║  │  • SSL Inspection     │  • SSL Inspection                  │        ║
+║  │  • URL Filtering      │  • URL Filtering                   │        ║
+║  │  • Malware Detection  │  • Malware Detection               │        ║
+║  └───────────────────────┴────────────────────────────────────┘        ║
+║               │                                  │                      ║
+║               └────────[Traffic Returns]-────────┘                      ║
+╚════════════════════════════▲═════════════════════════════════════════════╝
+                             │
+           ┌─────────────────┴──────────────────┐
+           │      [After Security Inspection]   │
+           └─────────────────┬──────────────────┘
+                             │
+╔════════════════════════════▼═════════════════════════════════════════════╗
+║                        APPLICATION VPC (10.0.0.0/16)                     ║
+║                                                                           ║
+║  ╔═══════════════════════════════════════════════════════════════════╗  ║
+║  ║             PRIVATE SUBNET TIER (Workloads)                       ║  ║
+║  ║  ┌─────────────────────┬──────────────────────┐                  ║  ║
+║  ║  │  Workload Subnet    │  Workload Subnet     │                  ║  ║
+║  ║  │  AZ-1               │  AZ-2                │                  ║  ║
+║  ║  │  10.0.21.0/24       │  10.0.22.0/24        │                  ║  ║
+║  ║  │                     │                      │                  ║  ║
+║  ║  │  ┌──────────────┐   │  ┌──────────────┐   │                  ║  ║
+║  ║  │  │  Workload 1  │   │  │  Workload 2  │   │                  ║  ║
+║  ║  │  │  EC2 Instance│   │  │  EC2 Instance│   │                  ║  ║
+║  ║  │  │  Private IP  │   │  │  Private IP  │   │                  ║  ║
+║  ║  │  │  10.0.21.10  │   │  │  10.0.22.15  │   │                  ║  ║
+║  ║  │  │              │   │  │              │   │                  ║  ║
+║  ║  │  │  • Web Server│   │  │  • Web Server│   │                  ║  ║
+║  ║  │  │  • No Public │   │  │  • No Public │   │                  ║  ║
+║  ║  │  │    IP        │   │  │    IP        │   │                  ║  ║
+║  ║  │  │  • Encrypted │   │  │  • Encrypted │   │                  ║  ║
+║  ║  │  │    EBS       │   │  │    EBS       │   │                  ║  ║
+║  ║  │  │  • IMDSv2    │   │  │  • IMDSv2    │   │                  ║  ║
+║  ║  │  └──────────────┘   │  └──────────────┘   │                  ║  ║
+║  ║  │                     │                      │                  ║  ║
+║  ║  │  [More instances distributed across AZs]  │                  ║  ║
+║  ║  │                     │                      │                  ║  ║
+║  ║  └─────────────────────┴──────────────────────┘                  ║  ║
+║  ║                                                                   ║  ║
+║  ║  Route Table: Jumphost CIDR → VPC Peering                       ║  ║
+║  ║               (Optional NAT Gateway for egress)                  ║  ║
+║  ╚═══════════════════════════════════════════════════════════════════╝  ║
+║                                                                           ║
+║  ┌─────────────────────────────────────────────────────────────────┐    ║
+║  │                   VPC FLOW LOGS                                  │    ║
+║  │  • CloudWatch Log Group: /aws/vpc/<name>-flow-logs             │    ║
+║  │  • Traffic Type: ALL                                            │    ║
+║  │  • Captures: Accept, Reject, and All traffic                    │    ║
+║  └─────────────────────────────────────────────────────────────────┘    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+                                    ▲
+                                    │
+                      [VPC Peering Connection]
+                                    │
+╔═══════════════════════════════════▼═══════════════════════════════════════╗
+║                   JUMPHOST VPC (ZS_JH_VPC) - Optional                     ║
+║                          10.100.0.0/16                                    ║
+║  ┌───────────────────────────────────────────────────────────────────┐   ║
+║  │                  Jumphost / Bastion Instances                     │   ║
+║  │  • SSH access to workload instances                               │   ║
+║  │  • Management and administration                                  │   ║
+║  │  • Secure access point                                            │   ║
+║  └───────────────────────────────────────────────────────────────────┘   ║
+║                                                                           ║
+║  Route Tables Updated: Routes to 10.0.0.0/16 → VPC Peering               ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                               TRAFFIC FLOW PATHS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          INGRESS TRAFFIC FLOW                               │
+│                     (Internet → Workload Instance)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [1] User Request
+      │
+      │ HTTP/HTTPS: GET http://alb-dns-name.region.elb.amazonaws.com
+      ▼
+  [2] Internet Gateway (IGW)
+      │
+      │ IGW Edge Route: 10.0.1.0/24 → GWLB Endpoint AZ-1
+      ▼
+  [3] GWLB Endpoint (AZ-1)
+      │
+      │ GENEVE Encapsulation (adds inspection header)
+      │ Original Packet + GENEVE Header → GWLB
+      ▼
+  [4] Security Account: GWLB
+      │
+      │ Distributes to healthy firewall instance
+      ▼
+  [5] Firewall Instance
+      │
+      │ Deep Packet Inspection:
+      │  • Stateful firewall rules
+      │  • IDS/IPS signatures
+      │  • Threat intelligence
+      │  • URL filtering
+      │  • Malware detection
+      │
+      │ Decision: ALLOW / DENY
+      ▼
+  [6] GWLB → GWLB Endpoint
+      │
+      │ GENEVE De-encapsulation (removes inspection header)
+      ▼
+  [7] GWLB Endpoint Subnet
+      │
+      │ Route: Destination ALB subnet → Local (within VPC)
+      ▼
+  [8] Application Load Balancer
+      │
+      │ Target Selection:
+      │  • Health check: Only healthy targets
+      │  • Algorithm: Round-robin (or least outstanding requests)
+      │  • Sticky sessions: If configured
+      ▼
+  [9] Workload Instance (10.0.21.10)
+      │
+      │ Process Request:
+      │  • Web server handles request
+      │  • Generate response
+      ▼
+ [10] Response Path (Symmetric - same flow in reverse)
+      │
+      │ Workload → ALB → GWLB EP → Firewall → GWLB EP → IGW → Internet
+      ▼
+  [11] User Receives Response
+
+  TOTAL LATENCY: ~100-150ms (with inspection)
+  HOPS: 5 (IGW → GWLB EP → Firewall → GWLB EP → ALB → Workload)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       MANAGEMENT ACCESS FLOW                                │
+│                   (Jumphost → Workload Instance)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [1] Administrator on Jumphost
+      │
+      │ SSH Command: ssh -i key.pem ec2-user@10.0.21.10
+      ▼
+  [2] Jumphost VPC Route Table
+      │
+      │ Route: 10.0.0.0/16 → VPC Peering Connection
+      ▼
+  [3] VPC Peering Connection
+      │
+      │ Bidirectional connection (active state)
+      ▼
+  [4] Workload VPC Route Table
+      │
+      │ Route: 10.100.0.0/16 → VPC Peering Connection
+      ▼
+  [5] Workload Subnet
+      │
+      │ Security Group Check:
+      │  • Source: 10.100.x.x (jumphost IP)
+      │  • Port: 22 (SSH)
+      │  • Protocol: TCP
+      │  • Action: ALLOW
+      ▼
+  [6] Workload Instance (10.0.21.10)
+      │
+      │ SSH Daemon accepts connection
+      │ Key-based authentication
+      ▼
+  [7] Secure Shell Session Established
+
+  LATENCY: ~5-10ms (direct VPC peering, no inspection)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                            SECURITY GROUP RULES
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ALB Security Group                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INGRESS:                                                                    │
+│  • Port 80 (HTTP)    ← 0.0.0.0/0             [Public Access]              │
+│  • Port 443 (HTTPS)  ← 0.0.0.0/0             [Public Access if enabled]   │
+│                                                                             │
+│ EGRESS:                                                                     │
+│  • Port 80           → Workload Security Group [ALB to Workloads]         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Workload Security Group                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INGRESS:                                                                    │
+│  • Port 80           ← ALB Security Group     [From ALB only]             │
+│  • Port 22 (SSH)     ← 10.100.0.0/16          [From Jumphost if enabled] │
+│                                                                             │
+│ EGRESS:                                                                     │
+│  • All Traffic       → 0.0.0.0/0              [Allow all outbound]        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              ROUTE TABLES SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RT-1: IGW Edge Route Table (Attached to IGW)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Destination         │  Target                 │  Purpose                   │
+├──────────────────────┼─────────────────────────┼────────────────────────────┤
+│  10.0.1.0/24         │  GWLB Endpoint AZ-1     │  Immediate inspection      │
+│  10.0.2.0/24         │  GWLB Endpoint AZ-2     │  Immediate inspection      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RT-2: ALB Subnet Route Table                                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Destination         │  Target                 │  Purpose                   │
+├──────────────────────┼─────────────────────────┼────────────────────────────┤
+│  0.0.0.0/0           │  GWLB Endpoint          │  Egress inspection         │
+│  10.100.0.0/16       │  VPC Peering            │  Jumphost access           │
+│  10.0.0.0/16         │  local                  │  Local VPC traffic         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RT-3: GWLB Endpoint Subnet Route Table                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Destination         │  Target                 │  Purpose                   │
+├──────────────────────┼─────────────────────────┼────────────────────────────┤
+│  0.0.0.0/0           │  Internet Gateway       │  After inspection to IGW   │
+│  10.100.0.0/16       │  VPC Peering            │  Jumphost access           │
+│  10.0.0.0/16         │  local                  │  Local VPC traffic         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RT-4: Workload Subnet Route Table                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Destination         │  Target                 │  Purpose                   │
+├──────────────────────┼─────────────────────────┼────────────────────────────┤
+│  10.100.0.0/16       │  VPC Peering            │  Jumphost access           │
+│  0.0.0.0/0           │  NAT Gateway (optional) │  Workload egress           │
+│  10.0.0.0/16         │  local                  │  Local VPC traffic         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           HIGH AVAILABILITY DESIGN
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Component                  │   HA Strategy          │
+├────────────────────────────────────────────────────┼────────────────────────┤
+│  Internet Gateway                                  │  Regional (AWS managed)│
+│  Application Load Balancer                         │  Multi-AZ (2+ zones)   │
+│  GWLB Endpoints                                    │  One per AZ            │
+│  Workload Instances                                │  Distributed across AZs│
+│  VPC Peering                                       │  Regional (AWS managed)│
+│  Firewall Instances (Security Account)             │  Multi-AZ with GWLB    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+FAILURE SCENARIOS:
+  • Single Instance Failure → ALB routes to healthy instances
+  • AZ Failure → ALB and GWLB route to other AZs
+  • GWLB Endpoint Failure → Traffic routes through other AZ endpoints
+  • Firewall Instance Failure → GWLB routes to healthy instances
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                            MONITORING & OBSERVABILITY
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Metric Source               │  What to Monitor                             │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│  VPC Flow Logs               │  • Accepted/rejected connections             │
+│                              │  • Traffic volumes                           │
+│                              │  • Source/destination patterns               │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│  ALB Metrics                 │  • Target health status                      │
+│                              │  • Request count & latency                   │
+│                              │  • HTTP error rates (4xx, 5xx)               │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│  GWLB Endpoint               │  • Endpoint state (available/failed)         │
+│                              │  • Processed bytes                           │
+│                              │  • Connection count                          │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│  EC2 Instances               │  • CPU utilization                           │
+│                              │  • Network in/out                            │
+│                              │  • Status checks                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           LEGEND & CONVENTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+  SYMBOLS:
+    │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼    Standard box drawing
+    ═ ║ ╔ ╗ ╚ ╝ ╠ ╣ ╦ ╩ ╬    Double-line box drawing (boundaries)
+    →  →  ▼  ▲               Flow direction
+    [Text]                   Annotation or note
+
+  NETWORK RANGES:
+    10.0.0.0/16             Application VPC CIDR
+    10.0.1.0/24 - 10.0.2.0/24   ALB subnets
+    10.0.11.0/24 - 10.0.12.0/24  GWLB Endpoint subnets
+    10.0.21.0/24 - 10.0.22.0/24  Workload subnets
+    10.100.0.0/16           Jumphost VPC CIDR (optional)
+
+  AVAILABILITY ZONES:
+    AZ-1                    us-east-1a (or configured AZ 1)
+    AZ-2                    us-east-1b (or configured AZ 2)
+
+═══════════════════════════════════════════════════════════════════════════════
+                          DOCUMENT INFORMATION
+═══════════════════════════════════════════════════════════════════════════════
+
+  Document: AWS Ingress Inspection Architecture - Visual Diagram
+  Version: 1.0
+  Date: October 22, 2025
+  Format: ASCII Art / Plain Text
+  Purpose: Visual reference for architecture understanding and documentation
+
+═══════════════════════════════════════════════════════════════════════════════
+

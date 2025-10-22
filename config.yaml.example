@@ -1,0 +1,94 @@
+# ============================================================================
+# AWS Ingress Inspection Architecture - Configuration
+# ============================================================================
+# Copy this file to config.yaml and update with your values
+# cp config.yaml.example config.yaml
+# ============================================================================
+
+# Project Configuration
+PROJECT_NAME: "ingress-inspection"
+ENVIRONMENT: "dev"
+AWS_REGION: "us-east-1"
+
+# Availability Zones (must specify at least 2)
+AVAILABILITY_ZONES:
+  - "us-east-1a"
+  - "us-east-1b"
+
+# VPC Configuration
+VPC_CIDR: "10.0.0.0/16"
+ALB_SUBNET_CIDRS:
+  - "10.0.1.0/24"
+  - "10.0.2.0/24"
+GWLBE_SUBNET_CIDRS:
+  - "10.0.11.0/24"
+  - "10.0.12.0/24"
+WORKLOAD_SUBNET_CIDRS:
+  - "10.0.21.0/24"
+  - "10.0.22.0/24"
+
+# Gateway Load Balancer Configuration
+# REQUIRED: Get this from your security team
+GWLB_ENDPOINT_SERVICE_NAME: "com.amazonaws.vpce.us-east-1.vpce-svc-XXXXXXXXXXXXXXXXX"
+ENABLE_GWLB_INSPECTION: true
+
+# Application Load Balancer
+ALB_INTERNAL: false
+ALB_LISTENER_PORT: 80
+ALB_LISTENER_PROTOCOL: "HTTP"
+ALB_TARGET_PORT: 80
+
+# Workload Configuration
+WORKLOAD_COUNT: 2
+WORKLOAD_INSTANCE_TYPE: "t3.micro"
+WORKLOAD_KEY_NAME: "my-keypair"  # REQUIRED if WORKLOAD_COUNT > 0
+
+# VPC Peering (Jumphost Access)
+ENABLE_VPC_PEERING: true
+JUMPHOST_VPC_ID: "vpc-XXXXXXXXXXXXXXXXX"
+JUMPHOST_VPC_CIDR: "10.100.0.0/16"
+JUMPHOST_ROUTE_TABLE_IDS:
+  - "rtb-XXXXXXXXXXXXXXXXX"
+SSH_ALLOWED_CIDRS:
+  - "10.100.0.0/16"
+
+# Optional Features
+ENABLE_FLOW_LOGS: true
+ENABLE_NAT_GATEWAY: false
+ENABLE_DELETION_PROTECTION: false
+
+# Brownfield Configuration (set to false for new VPC)
+CREATE_VPC: true
+CREATE_IGW: true
+
+# ============================================================================
+# Example Configurations
+# ============================================================================
+
+# Production Example:
+# -------------------
+# PROJECT_NAME: "prod-ingress"
+# ENVIRONMENT: "prod"
+# WORKLOAD_COUNT: 4
+# WORKLOAD_INSTANCE_TYPE: "t3.small"
+# ENABLE_NAT_GATEWAY: true
+# ENABLE_DELETION_PROTECTION: true
+# ALB_LISTENER_PROTOCOL: "HTTPS"
+# ALB_CERTIFICATE_ARN: "arn:aws:acm:us-east-1:123456789012:certificate/xxxxx"
+
+# Development/Testing Example:
+# -----------------------------
+# PROJECT_NAME: "dev-test"
+# ENVIRONMENT: "dev"
+# WORKLOAD_COUNT: 1
+# ENABLE_GWLB_INSPECTION: false  # Test without GWLB first
+# ENABLE_VPC_PEERING: false
+# ENABLE_FLOW_LOGS: false
+
+# Brownfield Example (Existing VPC):
+# -----------------------------------
+# CREATE_VPC: false
+# EXISTING_VPC_ID: "vpc-0123456789abcdef0"
+# CREATE_IGW: false
+# EXISTING_IGW_ID: "igw-0123456789abcdef0"
+

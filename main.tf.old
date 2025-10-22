@@ -1,0 +1,493 @@
+# ============================================================================
+# AWS Ingress and East-West Traffic Inspection Architecture
+# ============================================================================
+
+# ============================================================================
+# Inspection VPC
+# ============================================================================
+
+resource "aws_vpc" "inspection" {
+  cidr_block           = local.inspection_vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = merge(local.tags, {
+    Name = "inspection-vpc"
+  })
+}
+
+resource "aws_internet_gateway" "inspection" {
+  vpc_id = aws_vpc.inspection.id
+
+  tags = merge(local.tags, {
+    Name = "inspection-igw"
+  })
+}
+
+# NLB Subnets
+resource "aws_subnet" "inspection_nlb" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.inspection_subnets.nlb_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.inspection_subnets.nlb_az2 }
+  }
+
+  vpc_id            = aws_vpc.inspection.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "inspection-nlb-subnet-${each.key}"
+  })
+}
+
+# GWLB Endpoint Subnets
+resource "aws_subnet" "inspection_gwlbe" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.inspection_subnets.gwlbe_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.inspection_subnets.gwlbe_az2 }
+  }
+
+  vpc_id            = aws_vpc.inspection.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "inspection-gwlbe-subnet-${each.key}"
+  })
+}
+
+# TGW Attachment Subnets
+resource "aws_subnet" "inspection_tgw" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.inspection_subnets.tgw_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.inspection_subnets.tgw_az2 }
+  }
+
+  vpc_id            = aws_vpc.inspection.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "inspection-tgw-subnet-${each.key}"
+  })
+}
+
+# ============================================================================
+# Application VPCs
+# ============================================================================
+
+# VPC-A
+resource "aws_vpc" "vpc_a" {
+  cidr_block           = local.vpc_a_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = merge(local.tags, {
+    Name = "application-vpc-a"
+  })
+}
+
+resource "aws_subnet" "vpc_a_workload" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.vpc_a_subnets.workload_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.vpc_a_subnets.workload_az2 }
+  }
+
+  vpc_id            = aws_vpc.vpc_a.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "vpc-a-workload-subnet-${each.key}"
+  })
+}
+
+resource "aws_subnet" "vpc_a_tgw" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.vpc_a_subnets.tgw_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.vpc_a_subnets.tgw_az2 }
+  }
+
+  vpc_id            = aws_vpc.vpc_a.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "vpc-a-tgw-subnet-${each.key}"
+  })
+}
+
+# VPC-B
+resource "aws_vpc" "vpc_b" {
+  cidr_block           = local.vpc_b_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = merge(local.tags, {
+    Name = "application-vpc-b"
+  })
+}
+
+resource "aws_subnet" "vpc_b_workload" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.vpc_b_subnets.workload_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.vpc_b_subnets.workload_az2 }
+  }
+
+  vpc_id            = aws_vpc.vpc_b.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "vpc-b-workload-subnet-${each.key}"
+  })
+}
+
+resource "aws_subnet" "vpc_b_tgw" {
+  for_each = {
+    az1 = { az = local.availability_zones[0], cidr = local.vpc_b_subnets.tgw_az1 }
+    az2 = { az = local.availability_zones[1], cidr = local.vpc_b_subnets.tgw_az2 }
+  }
+
+  vpc_id            = aws_vpc.vpc_b.id
+  cidr_block        = each.value.cidr
+  availability_zone = each.value.az
+
+  tags = merge(local.tags, {
+    Name = "vpc-b-tgw-subnet-${each.key}"
+  })
+}
+
+# ============================================================================
+# Transit Gateway
+# ============================================================================
+
+resource "aws_ec2_transit_gateway" "main" {
+  description                     = "Transit Gateway for inspection architecture"
+  amazon_side_asn                = local.tgw_asn
+  default_route_table_association = "disable"
+  default_route_table_propagation = "disable"
+  dns_support                     = "enable"
+  vpn_ecmp_support               = "enable"
+
+  tags = merge(local.tags, {
+    Name = "inspection-tgw"
+  })
+}
+
+# TGW Route Tables
+resource "aws_ec2_transit_gateway_route_table" "spoke" {
+  transit_gateway_id = aws_ec2_transit_gateway.main.id
+
+  tags = merge(local.tags, {
+    Name = "tgw-spoke-rt"
+  })
+}
+
+resource "aws_ec2_transit_gateway_route_table" "inspection" {
+  transit_gateway_id = aws_ec2_transit_gateway.main.id
+
+  tags = merge(local.tags, {
+    Name = "tgw-inspection-rt"
+  })
+}
+
+# TGW VPC Attachments
+resource "aws_ec2_transit_gateway_vpc_attachment" "inspection" {
+  subnet_ids                                      = [for s in aws_subnet.inspection_tgw : s.id]
+  transit_gateway_id                              = aws_ec2_transit_gateway.main.id
+  vpc_id                                          = aws_vpc.inspection.id
+  appliance_mode_support                          = "enable"
+  dns_support                                     = "enable"
+  transit_gateway_default_route_table_association = false
+  transit_gateway_default_route_table_propagation = false
+
+  tags = merge(local.tags, {
+    Name = "tgw-attach-inspection-vpc"
+  })
+}
+
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_a" {
+  subnet_ids                                      = [for s in aws_subnet.vpc_a_tgw : s.id]
+  transit_gateway_id                              = aws_ec2_transit_gateway.main.id
+  vpc_id                                          = aws_vpc.vpc_a.id
+  dns_support                                     = "enable"
+  transit_gateway_default_route_table_association = false
+  transit_gateway_default_route_table_propagation = false
+
+  tags = merge(local.tags, {
+    Name = "tgw-attach-vpc-a"
+  })
+}
+
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_b" {
+  subnet_ids                                      = [for s in aws_subnet.vpc_b_tgw : s.id]
+  transit_gateway_id                              = aws_ec2_transit_gateway.main.id
+  vpc_id                                          = aws_vpc.vpc_b.id
+  dns_support                                     = "enable"
+  transit_gateway_default_route_table_association = false
+  transit_gateway_default_route_table_propagation = false
+
+  tags = merge(local.tags, {
+    Name = "tgw-attach-vpc-b"
+  })
+}
+
+# TGW Route Table Associations
+resource "aws_ec2_transit_gateway_route_table_association" "inspection" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.inspection.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.inspection.id
+}
+
+resource "aws_ec2_transit_gateway_route_table_association" "vpc_a" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_a.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.spoke.id
+}
+
+resource "aws_ec2_transit_gateway_route_table_association" "vpc_b" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_b.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.spoke.id
+}
+
+# TGW Routes - Spoke RT
+resource "aws_ec2_transit_gateway_route" "spoke_to_inspection" {
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.inspection.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.spoke.id
+}
+
+# TGW Routes - Inspection RT
+resource "aws_ec2_transit_gateway_route" "inspection_to_vpc_a" {
+  destination_cidr_block         = local.vpc_a_cidr
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_a.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.inspection.id
+}
+
+resource "aws_ec2_transit_gateway_route" "inspection_to_vpc_b" {
+  destination_cidr_block         = local.vpc_b_cidr
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_b.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.inspection.id
+}
+
+# ============================================================================
+# GWLB Endpoints
+# ============================================================================
+
+resource "aws_vpc_endpoint" "gwlbe" {
+  for_each = {
+    az1 = aws_subnet.inspection_gwlbe["az1"].id
+    az2 = aws_subnet.inspection_gwlbe["az2"].id
+  }
+
+  vpc_id             = aws_vpc.inspection.id
+  service_name       = local.gwlb_service_name
+  vpc_endpoint_type  = "GatewayLoadBalancer"
+  subnet_ids         = [each.value]
+
+  tags = merge(local.tags, {
+    Name = "gwlbe-inspection-${each.key}"
+  })
+}
+
+# ============================================================================
+# Network Load Balancer
+# ============================================================================
+
+resource "aws_lb" "nlb" {
+  name               = "inspection-nlb"
+  internal           = false
+  load_balancer_type = "network"
+  
+  dynamic "subnet_mapping" {
+    for_each = aws_subnet.inspection_nlb
+    content {
+      subnet_id = subnet_mapping.value.id
+    }
+  }
+
+  tags = merge(local.tags, {
+    Name = "inspection-nlb"
+  })
+}
+
+resource "aws_lb_target_group" "gwlbe" {
+  name        = "nlb-gwlbe-targets"
+  port        = local.nlb_target_port
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.inspection.id
+
+  health_check {
+    enabled  = true
+    protocol = "TCP"
+    port     = local.nlb_target_port
+  }
+
+  tags = merge(local.tags, {
+    Name = "nlb-gwlbe-targets"
+  })
+}
+
+# Register GWLB Endpoint IPs as targets
+resource "aws_lb_target_group_attachment" "gwlbe" {
+  for_each = {
+    for idx, ep in aws_vpc_endpoint.gwlbe : idx => ep
+  }
+
+  target_group_arn = aws_lb_target_group.gwlbe.arn
+  target_id        = tolist(each.value.network_interface_ids)[0]
+  port             = local.nlb_target_port
+}
+
+resource "aws_lb_listener" "nlb" {
+  load_balancer_arn = aws_lb.nlb.arn
+  port              = local.nlb_listener_port
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gwlbe.arn
+  }
+
+  tags = merge(local.tags, {
+    Name = "nlb-listener-${local.nlb_listener_port}"
+  })
+}
+
+# ============================================================================
+# Route Tables - Inspection VPC
+# ============================================================================
+
+# NLB Subnet Route Table
+resource "aws_route_table" "inspection_nlb" {
+  vpc_id = aws_vpc.inspection.id
+
+  tags = merge(local.tags, {
+    Name = "inspection-nlb-rt"
+  })
+}
+
+resource "aws_route" "nlb_to_vpc_a" {
+  route_table_id         = aws_route_table.inspection_nlb.id
+  destination_cidr_block = local.vpc_a_cidr
+  vpc_endpoint_id        = aws_vpc_endpoint.gwlbe["az1"].id
+}
+
+resource "aws_route" "nlb_to_vpc_b" {
+  route_table_id         = aws_route_table.inspection_nlb.id
+  destination_cidr_block = local.vpc_b_cidr
+  vpc_endpoint_id        = aws_vpc_endpoint.gwlbe["az1"].id
+}
+
+resource "aws_route" "nlb_to_internet" {
+  route_table_id         = aws_route_table.inspection_nlb.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.inspection.id
+}
+
+resource "aws_route_table_association" "inspection_nlb" {
+  for_each       = aws_subnet.inspection_nlb
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.inspection_nlb.id
+}
+
+# GWLB Endpoint Subnet Route Table
+resource "aws_route_table" "inspection_gwlbe" {
+  vpc_id = aws_vpc.inspection.id
+
+  tags = merge(local.tags, {
+    Name = "inspection-gwlbe-rt"
+  })
+}
+
+resource "aws_route" "gwlbe_to_tgw" {
+  route_table_id         = aws_route_table.inspection_gwlbe.id
+  destination_cidr_block = "0.0.0.0/0"
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
+}
+
+resource "aws_route_table_association" "inspection_gwlbe" {
+  for_each       = aws_subnet.inspection_gwlbe
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.inspection_gwlbe.id
+}
+
+# TGW Attachment Subnet Route Table
+resource "aws_route_table" "inspection_tgw" {
+  vpc_id = aws_vpc.inspection.id
+
+  tags = merge(local.tags, {
+    Name = "inspection-tgw-rt"
+  })
+}
+
+resource "aws_route" "tgw_to_gwlbe" {
+  route_table_id         = aws_route_table.inspection_tgw.id
+  destination_cidr_block = "0.0.0.0/0"
+  vpc_endpoint_id        = aws_vpc_endpoint.gwlbe["az1"].id
+}
+
+resource "aws_route_table_association" "inspection_tgw" {
+  for_each       = aws_subnet.inspection_tgw
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.inspection_tgw.id
+}
+
+# ============================================================================
+# Route Tables - Application VPCs
+# ============================================================================
+
+# VPC-A Workload Route Table
+resource "aws_route_table" "vpc_a_workload" {
+  vpc_id = aws_vpc.vpc_a.id
+
+  tags = merge(local.tags, {
+    Name = "vpc-a-workload-rt"
+  })
+}
+
+resource "aws_route" "vpc_a_to_vpc_b" {
+  route_table_id         = aws_route_table.vpc_a_workload.id
+  destination_cidr_block = local.vpc_b_cidr
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
+}
+
+resource "aws_route" "vpc_a_to_internet" {
+  route_table_id         = aws_route_table.vpc_a_workload.id
+  destination_cidr_block = "0.0.0.0/0"
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
+}
+
+resource "aws_route_table_association" "vpc_a_workload" {
+  for_each       = aws_subnet.vpc_a_workload
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.vpc_a_workload.id
+}
+
+# VPC-B Workload Route Table
+resource "aws_route_table" "vpc_b_workload" {
+  vpc_id = aws_vpc.vpc_b.id
+
+  tags = merge(local.tags, {
+    Name = "vpc-b-workload-rt"
+  })
+}
+
+resource "aws_route" "vpc_b_to_vpc_a" {
+  route_table_id         = aws_route_table.vpc_b_workload.id
+  destination_cidr_block = local.vpc_a_cidr
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
+}
+
+resource "aws_route" "vpc_b_to_internet" {
+  route_table_id         = aws_route_table.vpc_b_workload.id
+  destination_cidr_block = "0.0.0.0/0"
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
+}
+
+resource "aws_route_table_association" "vpc_b_workload" {
+  for_each       = aws_subnet.vpc_b_workload
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.vpc_b_workload.id
+}
+

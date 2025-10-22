@@ -1,0 +1,83 @@
+output "inspection_vpc_id" {
+  description = "Inspection VPC ID"
+  value       = aws_vpc.inspection.id
+}
+
+output "application_vpc_a_id" {
+  description = "Application VPC-A ID"
+  value       = aws_vpc.vpc_a.id
+}
+
+output "application_vpc_b_id" {
+  description = "Application VPC-B ID"
+  value       = aws_vpc.vpc_b.id
+}
+
+output "transit_gateway_id" {
+  description = "Transit Gateway ID"
+  value       = aws_ec2_transit_gateway.main.id
+}
+
+output "transit_gateway_spoke_route_table_id" {
+  description = "Transit Gateway Spoke Route Table ID"
+  value       = aws_ec2_transit_gateway_route_table.spoke.id
+}
+
+output "transit_gateway_inspection_route_table_id" {
+  description = "Transit Gateway Inspection Route Table ID"
+  value       = aws_ec2_transit_gateway_route_table.inspection.id
+}
+
+output "gwlb_endpoint_az1_id" {
+  description = "GWLB Endpoint AZ1 ID"
+  value       = aws_vpc_endpoint.gwlbe["az1"].id
+}
+
+output "gwlb_endpoint_az2_id" {
+  description = "GWLB Endpoint AZ2 ID"
+  value       = aws_vpc_endpoint.gwlbe["az2"].id
+}
+
+output "nlb_dns_name" {
+  description = "Network Load Balancer DNS Name"
+  value       = aws_lb.nlb.dns_name
+}
+
+output "nlb_arn" {
+  description = "Network Load Balancer ARN"
+  value       = aws_lb.nlb.arn
+}
+
+output "nlb_zone_id" {
+  description = "Network Load Balancer Zone ID"
+  value       = aws_lb.nlb.zone_id
+}
+
+output "vpc_a_workload_subnet_ids" {
+  description = "VPC-A Workload Subnet IDs"
+  value       = { for k, v in aws_subnet.vpc_a_workload : k => v.id }
+}
+
+output "vpc_b_workload_subnet_ids" {
+  description = "VPC-B Workload Subnet IDs"
+  value       = { for k, v in aws_subnet.vpc_b_workload : k => v.id }
+}
+
+output "access_url" {
+  description = "URL to access your application via NLB"
+  value       = "http://${aws_lb.nlb.dns_name}"
+}
+
+output "deployment_summary" {
+  description = "Deployment Summary"
+  value = {
+    region             = local.region
+    availability_zones = local.availability_zones
+    inspection_vpc     = aws_vpc.inspection.id
+    application_vpc_a  = aws_vpc.vpc_a.id
+    application_vpc_b  = aws_vpc.vpc_b.id
+    transit_gateway    = aws_ec2_transit_gateway.main.id
+    nlb_dns            = aws_lb.nlb.dns_name
+  }
+}
+

@@ -1,0 +1,348 @@
+#!/bin/bash
+
+# ============================================================================
+# AWS Ingress Inspection Architecture - Deployment Helper Script
+# ============================================================================
+# This script simplifies the deployment process by providing a menu-driven
+# interface for common operations.
+#
+# Usage: ./deploy.sh [command]
+# Commands: init, plan, apply, destroy, validate, output, test
+# ============================================================================
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+print_header() {
+    echo -e "${BLUE}"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "  $1"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo -e "${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ $1${NC}"
+}
+
+check_prerequisites() {
+    print_header "Checking Prerequisites"
+    
+    # Check Terraform
+    if ! command -v terraform &> /dev/null; then
+        print_error "Terraform is not installed. Please install Terraform >= 1.0"
+        exit 1
+    fi
+    print_success "Terraform $(terraform version | head -1 | awk '{print $2}')"
+    
+    # Check AWS CLI
+    if ! command -v aws &> /dev/null; then
+        print_error "AWS CLI is not installed. Please install AWS CLI v2"
+        exit 1
+    fi
+    print_success "AWS CLI $(aws --version | awk '{print $1}' | cut -d'/' -f2)"
+    
+    # Check AWS credentials
+    if ! aws sts get-caller-identity &> /dev/null; then
+        print_error "AWS credentials not configured. Run 'aws configure'"
+        exit 1
+    fi
+    
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    print_success "AWS Account: $ACCOUNT_ID"
+    
+    # Check for configuration file
+    if [ ! -f "config.yaml" ]; then
+        print_warning "config.yaml not found"
+        echo "Would you like to create one from the example? (y/n)"
+        read -r response
+        if [ "$response" = "y" ]; then
+            cp config.yaml.example config.yaml
+            print_success "Created config.yaml from example"
+            print_warning "Please edit config.yaml with your values before continuing"
+            exit 0
+        fi
+    else
+        print_success "Configuration file found: config.yaml"
+    fi
+    
+    echo ""
+}
+
+terraform_init() {
+    print_header "Initializing Terraform"
+    terraform init
+    print_success "Terraform initialized"
+    echo ""
+}
+
+terraform_validate() {
+    print_header "Validating Configuration"
+    terraform validate
+    print_success "Configuration is valid"
+    echo ""
+}
+
+terraform_plan() {
+    print_header "Planning Deployment"
+    terraform plan -out=tfplan
+    print_success "Plan saved to tfplan"
+    echo ""
+}
+
+terraform_create() {
+    print_header "Creating Infrastructure"
+    
+    if [ ! -f "tfplan" ]; then
+        print_warning "No saved plan found. Creating new plan..."
+        terraform_plan
+    fi
+    
+    echo ""
+    print_warning "This will create infrastructure in AWS"
+    echo "Do you want to proceed? (yes/no)"
+    read -r response
+    
+    if [ "$response" != "yes" ]; then
+        print_info "Creation cancelled"
+        exit 0
+    fi
+    
+    terraform apply tfplan
+    rm -f tfplan
+    print_success "Infrastructure created successfully!"
+    echo ""
+    
+    # Show important outputs
+    print_header "Deployment Outputs"
+    terraform output alb_dns_name 2>/dev/null && \
+    terraform output workload_private_ips 2>/dev/null
+    echo ""
+}
+
+terraform_destroy() {
+    print_header "Destroying Infrastructure"
+    
+    print_warning "This will DESTROY all infrastructure resources!"
+    echo "Type 'destroy' to confirm:"
+    read -r confirmation
+    
+    if [ "$confirmation" != "destroy" ]; then
+        print_info "Destroy cancelled"
+        exit 0
+    fi
+    
+    terraform destroy
+    print_success "Infrastructure destroyed"
+    echo ""
+}
+
+show_outputs() {
+    print_header "Terraform Outputs"
+    terraform output
+    echo ""
+}
+
+run_tests() {
+    print_header "Running Basic Tests"
+    
+    if ! terraform output &> /dev/null; then
+        print_error "No deployment found. Please deploy first."
+        exit 1
+    fi
+    
+    # Test ALB connectivity
+    ALB_DNS=$(terraform output -raw alb_dns_name 2>/dev/null)
+    
+    if [ -z "$ALB_DNS" ]; then
+        print_error "Cannot get ALB DNS name"
+        exit 1
+    fi
+    
+    print_info "Testing ALB connectivity: $ALB_DNS"
+    
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 http://$ALB_DNS || echo "000")
+    
+    if [ "$HTTP_CODE" == "200" ]; then
+        print_success "ALB is responding (HTTP $HTTP_CODE)"
+    else
+        print_error "ALB is not responding correctly (HTTP $HTTP_CODE)"
+    fi
+    
+    # Test target health
+    TG_ARN=$(terraform output -raw alb_target_group_arn 2>/dev/null)
+    
+    if [ ! -z "$TG_ARN" ]; then
+        print_info "Checking target health..."
+        HEALTHY_COUNT=$(aws elbv2 describe-target-health \
+            --target-group-arn $TG_ARN \
+            --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' \
+            --output text)
+        
+        TOTAL_COUNT=$(aws elbv2 describe-target-health \
+            --target-group-arn $TG_ARN \
+            --query 'length(TargetHealthDescriptions)' \
+            --output text)
+        
+        if [ "$HEALTHY_COUNT" == "$TOTAL_COUNT" ]; then
+            print_success "All $TOTAL_COUNT targets are healthy"
+        else
+            print_warning "$HEALTHY_COUNT out of $TOTAL_COUNT targets are healthy"
+        fi
+    fi
+    
+    # Check GWLB endpoints
+    GWLB_IDS=$(terraform output -json gwlb_endpoint_ids 2>/dev/null | jq -r '.[]' 2>/dev/null || echo "")
+    
+    if [ ! -z "$GWLB_IDS" ]; then
+        print_info "Checking GWLB endpoints..."
+        
+        for ENDPOINT in $GWLB_IDS; do
+            STATE=$(aws ec2 describe-vpc-endpoints \
+                --vpc-endpoint-ids $ENDPOINT \
+                --query 'VpcEndpoints[0].State' \
+                --output text 2>/dev/null || echo "unknown")
+            
+            if [ "$STATE" == "available" ]; then
+                print_success "GWLB Endpoint $ENDPOINT: $STATE"
+            else
+                print_warning "GWLB Endpoint $ENDPOINT: $STATE"
+            fi
+        done
+    fi
+    
+    echo ""
+}
+
+show_help() {
+    cat << EOF
+AWS Ingress Inspection Architecture - Deployment Helper
+
+Usage: ./ztgw_infra [command]
+
+Commands:
+    init        Initialize Terraform (downloads providers)
+    validate    Validate Terraform configuration
+    plan        Create execution plan
+    create      Create/deploy infrastructure
+    destroy     Destroy all infrastructure
+    output      Show Terraform outputs
+    test        Run basic connectivity tests
+    help        Show this help message
+
+Configuration:
+    Edit config.yaml with your settings before deployment
+
+Examples:
+    ./ztgw_infra init       # Initialize Terraform
+    ./ztgw_infra plan       # Review what will be created
+    ./ztgw_infra create     # Create infrastructure
+    ./ztgw_infra test       # Test deployment
+    ./ztgw_infra destroy    # Destroy everything
+
+Interactive Mode:
+    ./ztgw_infra            # Run without arguments for menu
+
+EOF
+}
+
+show_menu() {
+    print_header "AWS Ingress Inspection Architecture"
+    echo "1) Initialize Terraform"
+    echo "2) Validate Configuration"
+    echo "3) Plan Deployment"
+    echo "4) Create Infrastructure"
+    echo "5) Show Outputs"
+    echo "6) Run Tests"
+    echo "7) Destroy Infrastructure"
+    echo "8) Exit"
+    echo ""
+    echo -n "Select an option: "
+    read -r option
+    echo ""
+    
+    case $option in
+        1) terraform_init; show_menu ;;
+        2) terraform_validate; show_menu ;;
+        3) terraform_plan; show_menu ;;
+        4) terraform_create; show_menu ;;
+        5) show_outputs; show_menu ;;
+        6) run_tests; show_menu ;;
+        7) terraform_destroy; show_menu ;;
+        8) exit 0 ;;
+        *) print_error "Invalid option"; show_menu ;;
+    esac
+}
+
+# ============================================================================
+# Main Script
+# ============================================================================
+
+cd "$SCRIPT_DIR"
+
+# Check prerequisites
+check_prerequisites
+
+# Handle command line arguments
+case "${1:-}" in
+    init)
+        terraform_init
+        ;;
+    validate)
+        terraform_validate
+        ;;
+    plan)
+        terraform_plan
+        ;;
+    create)
+        terraform_create
+        ;;
+    destroy)
+        terraform_destroy
+        ;;
+    output)
+        show_outputs
+        ;;
+    test)
+        run_tests
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    "")
+        # No arguments - show interactive menu
+        show_menu
+        ;;
+    *)
+        print_error "Unknown command: $1"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac
+
