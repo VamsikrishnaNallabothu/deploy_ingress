@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NSI In-Band Infra Setup/Cleanup Workflow</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #111827;
+      --panel-2: #0f172a;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22d3ee;
+      --accent-2: #38bdf8;
+      --border: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    header {
+      padding: 32px 24px;
+      background: linear-gradient(135deg, #0b1220 0%, #111827 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { margin: 0 0 8px 0; font-size: 28px; }
+    header p { margin: 0; color: var(--muted); }
+    main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    section {
+      margin-bottom: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    h2 { margin: 0 0 12px 0; font-size: 20px; }
+    h3 { margin: 16px 0 8px 0; font-size: 16px; color: var(--accent); }
+    p, li { color: var(--text); }
+    ul { margin: 8px 0 0 18px; }
+    code {
+      background: var(--panel-2);
+      padding: 2px 6px;
+      border-radius: 6px;
+      color: var(--accent-2);
+    }
+    details {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 12px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .note {
+      background: #0b1324;
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+    @media (min-width: 960px) {
+      .grid.two { grid-template-columns: 1fr 1fr; }
+    }
+    .mermaid {
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    pre {
+      margin: 8px 0 0 0;
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+    }
+    pre code {
+      color: var(--text);
+      background: transparent;
+      padding: 0;
+    }
+    .payload-note {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    footer {
+      padding: 16px 24px 32px 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        themeVariables: {
+          primaryColor: "#0f172a",
+          primaryTextColor: "#e5e7eb",
+          primaryBorderColor: "#1f2937",
+          lineColor: "#38bdf8",
+          secondaryColor: "#111827",
+          tertiaryColor: "#0b1220"
+        }
+      });
+    });
+  </script>
+</head>
+<body>
+  <header>
+    <h1>NSI In-Band Infra Setup/Cleanup Workflow</h1>
+    <p>Production-ready documentation for NSI in-band consumer resource orchestration.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Overview</h2>
+      <p>This document covers the full workflow implemented by <code>infra_setup</code> and <code>infra_cleanup</code>
+        for NSI in-band integration. It also explains dependencies and operational notes.</p>
+      <div class="note">
+        The in-band flow relies on a strict dependency chain: Intercept Endpoint Group (IEG) → IEG Association → Security
+        Profile → Security Profile Group → Firewall Policy Rule → Policy Association.
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div>
+        <h2>Step Summary: Infra Setup</h2>
+        <ul>
+          <li>Load configuration and normalize producer/consumer inputs.</li>
+          <li>Provision or reuse VPC + subnets in the consumer project.</li>
+          <li>Validate producer intercept deployment group exists.</li>
+          <li>Create or reuse IEG and associate it to the consumer VPC/subnet.</li>
+          <li>Create security profile and security profile group.</li>
+          <li>Ensure firewall policy evaluation order is BEFORE_CLASSIC_FIREWALL.</li>
+          <li>Create network firewall policy, rule, and policy association.</li>
+          <li>Allow internal traffic and deploy test client/server VMs.</li>
+          <li>Verify inspection workflow via serial output.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>Step Summary: Infra Cleanup</h2>
+        <ul>
+          <li>Delete test client/server VMs.</li>
+          <li>Remove allow-internal firewall rule.</li>
+          <li>Remove policy association, then policy rule, then policy.</li>
+          <li>Remove security profile group and security profile.</li>
+          <li>Remove IEG association and IEG.</li>
+          <li>Optionally delete subnets and VPC.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>Usage Overview</h2>
+      <p>Use <code>infra_setup()</code> to create or reuse all consumer resources and verify the in-band workflow.
+        Use <code>infra_cleanup()</code> to remove resources in reverse dependency order.</p>
+      <details>
+        <summary>Config Input Example (infra_access.cfg)</summary>
+        <pre><code>[GCP-NSI-INBAND]
+NSI_INBAND_PRODUCER_CFG = {"project": "producer-prj", "location": "global",
+                           "intercept_deployment_group": "prod-idg"}
+NSI_INBAND_CONSUMER_CFG = {"project": "consumer-prj", "vpc_name": "nsi-consumer-vpc",
+                           "subnets": [{"name": "nsi-subnet", "region": "us-central1",
+                                        "ip_cidr_range": "10.10.0.0/24"}]}
+NSI_INBAND_NSI_CFG = {"location": "global",
+                      "intercept_endpoint_group": "ieg-1",
+                      "intercept_endpoint_group_association": "iega-1",
+                      "security_profile": "sp-1",
+                      "security_profile_group": "spg-1",
+                      "firewall_policy": "nsi-policy",
+                      "firewall_policy_association": "nsi-policy-assoc",
+                      "firewall_policy_rule_priority": 1000,
+                      "firewall_policy_rule_direction": "INGRESS",
+                      "policy_order": "BEFORE_CLASSIC_FIREWALL",
+                      "enforce_policy_order": true,
+                      "match": {"srcIpRanges": ["10.10.0.0/24"],
+                                "destIpRanges": ["10.10.0.0/24"],
+                                "layer4Configs": [{"ipProtocol": "all"}]}}
+NSI_INBAND_VM_CFG = {"subnet_name": "nsi-subnet", "region": "us-central1",
+                     "server_zone": "us-central1-a", "client_zone": "us-central1-b",
+                     "server_name": "nsi-server-01", "client_name": "nsi-client-01",
+                     "instance_type": "e2-medium",
+                     "image_name": "debian-12-bookworm-v20240110",
+                     "image_project": "debian-cloud",
+                     "tags": ["nsi-test"],
+                     "ssh_key": "user:ssh-rsa AAAA... user@host",
+                     "server_port": 8080}
+NSI_INBAND_OVERRIDE_EXISTING_RESOURCES = False
+NSI_INBAND_DELETE_VPCS_ON_CLEANUP = False</code></pre>
+        <div class="payload-note">Values are parsed as JSON objects when they look like JSON strings.</div>
+      </details>
+      <details>
+        <summary>Quick Usage Example</summary>
+        <pre><code>from cloud.gcp.gcp_orchestrator import GoogleConnector
+
+gcp = GoogleConnector()
+
+producer_cfg = {
+    "project": "producer-prj",
+    "location": "global",
+    "intercept_deployment_group": "prod-idg"
+}
+
+consumer_cfg = {
+    "project": "consumer-prj",
+    "vpc_name": "nsi-consumer-vpc",
+    "subnets": [
+        {"name": "nsi-subnet", "region": "us-central1", "ip_cidr_range": "10.10.0.0/24"}
+    ]
+}
+
+nsi_cfg = {
+    "location": "global",
+    "intercept_endpoint_group": "ieg-1",
+    "intercept_endpoint_group_association": "iega-1",
+    "security_profile": "sp-1",
+    "security_profile_group": "spg-1",
+    "firewall_policy": "nsi-policy",
+    "firewall_policy_association": "nsi-policy-assoc",
+    "firewall_policy_rule_priority": 1000,
+    "firewall_policy_rule_direction": "INGRESS",
+    "policy_order": "BEFORE_CLASSIC_FIREWALL",
+    "enforce_policy_order": True,
+    "match": {
+        "srcIpRanges": ["10.10.0.0/24"],
+        "destIpRanges": ["10.10.0.0/24"],
+        "layer4Configs": [{"ipProtocol": "all"}]
+    }
+}
+
+vm_cfg = {
+    "subnet_name": "nsi-subnet",
+    "region": "us-central1",
+    "server_zone": "us-central1-a",
+    "client_zone": "us-central1-b",
+    "server_name": "nsi-server-01",
+    "client_name": "nsi-client-01",
+    "instance_type": "e2-medium",
+    "image_name": "debian-12-bookworm-v20240110",
+    "image_project": "debian-cloud",
+    "tags": ["nsi-test"],
+    "ssh_key": "user:ssh-rsa AAAA... user@host",
+    "server_port": 8080
+}
+
+result = gcp.infra_setup(
+    producer_cfg=producer_cfg,
+    consumer_cfg=consumer_cfg,
+    nsi_cfg=nsi_cfg,
+    vm_cfg=vm_cfg,
+    override_existing_resources=False
+)
+
+gcp.infra_cleanup(
+    consumer_cfg=consumer_cfg,
+    nsi_cfg=nsi_cfg,
+    vm_cfg=vm_cfg,
+    delete_vpcs_on_cleanup=False
+)</code></pre>
+      </details>
+      <details>
+        <summary>Config-Driven Usage Only</summary>
+        <pre><code>from cloud.gcp.gcp_orchestrator import GoogleConnector
+
+gcp = GoogleConnector()
+
+# Uses values from infra_access.cfg:
+# [GCP-NSI-INBAND] section keys:
+# NSI_INBAND_PRODUCER_CFG, NSI_INBAND_CONSUMER_CFG,
+# NSI_INBAND_NSI_CFG, NSI_INBAND_VM_CFG
+
+result = gcp.infra_setup()
+
+gcp.infra_cleanup()</code></pre>
+      </details>
+      <details>
+        <summary>Cross-Project Example (Producer vs Consumer)</summary>
+        <pre><code>from cloud.gcp.gcp_orchestrator import GoogleConnector
+
+gcp = GoogleConnector()
+
+producer_cfg = {
+    "project": "producer-prj",
+    "location": "global",
+    "intercept_deployment_group": "prod-idg"
+}
+
+consumer_cfg = {
+    "project": "consumer-prj",
+    "vpc_name": "nsi-consumer-vpc",
+    "subnets": [
+        {"name": "nsi-subnet", "region": "us-west1", "ip_cidr_range": "10.20.0.0/24"}
+    ]
+}
+
+nsi_cfg = {
+    "location": "global",
+    "intercept_endpoint_group": "ieg-1",
+    "intercept_endpoint_group_association": "iega-1",
+    "security_profile": "sp-1",
+    "security_profile_group": "spg-1",
+    "firewall_policy": "nsi-policy",
+    "firewall_policy_association": "nsi-policy-assoc",
+    "firewall_policy_rule_priority": 1000,
+    "policy_order": "BEFORE_CLASSIC_FIREWALL"
+}
+
+vm_cfg = {
+    "subnet_name": "nsi-subnet",
+    "region": "us-west1",
+    "server_zone": "us-west1-a",
+    "client_zone": "us-west1-b",
+    "server_name": "nsi-server-01",
+    "client_name": "nsi-client-01",
+    "instance_type": "e2-medium",
+    "image_name": "debian-12-bookworm-v20240110",
+    "image_project": "debian-cloud",
+    "tags": ["nsi-test"],
+    "ssh_key": "user:ssh-rsa AAAA... user@host"
+}
+
+result = gcp.infra_setup(
+    producer_cfg=producer_cfg,
+    consumer_cfg=consumer_cfg,
+    nsi_cfg=nsi_cfg,
+    vm_cfg=vm_cfg
+)</code></pre>
+      </details>
+      <div class="note">
+        If parameters are omitted, <code>infra_setup</code> and <code>infra_cleanup</code> will try to load values from
+        the configured NSI in-band section in <code>infra_access.cfg</code>.
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div>
+        <h2>Infra Setup Flow</h2>
+        <div class="mermaid">
+          flowchart TD
+            A["Load config or params"] --> B["Create or ensure VPC"]
+            B --> C["Create or ensure subnets"]
+            C --> D["Validate producer intercept deployment group"]
+            D --> E["Create or ensure intercept endpoint group"]
+            E --> F["Create or ensure IEG association"]
+            F --> G["Create or ensure security profile"]
+            G --> H["Create or ensure security profile group"]
+            H --> I["Ensure firewall policy order BEFORE CLASSIC FIREWALL"]
+            I --> J["Create or ensure network firewall policy"]
+            J --> K["Create or ensure firewall policy rule"]
+            K --> L["Create or ensure policy association"]
+            L --> M["Create allow internal firewall rule"]
+            M --> N["Create test VMs client and server"]
+            N --> O["Verify traffic via serial output"]
+        </div>
+      </div>
+      <div>
+        <h2>Infra Cleanup Flow</h2>
+        <div class="mermaid">
+          flowchart TD
+            A1[Load Config or Params] --> B1[Delete Test VMs]
+            B1 --> C1[Delete Allow-Internal Rule]
+            C1 --> D1[Delete Policy Association]
+            D1 --> E1[Delete Policy Rule]
+            E1 --> F1[Delete Network Firewall Policy]
+            F1 --> G1[Delete Security Profile Group]
+            G1 --> H1[Delete Security Profile]
+            H1 --> I1[Delete IEG Association]
+            I1 --> J1[Delete IEG]
+            J1 --> K1{Delete VPC and Subnets}
+            K1 -->|Yes| L1[Delete Subnets]
+            L1 --> M1[Delete VPC]
+            K1 -->|No| N1[Complete]
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div>
+        <h2>Sample Payloads: Infra Setup</h2>
+        <details>
+          <summary>A. Load Config or Params</summary>
+          <pre><code>{
+  "producer_cfg": {"project": "producer-prj", "location": "global", "intercept_deployment_group": "prod-idg"},
+  "consumer_cfg": {"project": "consumer-prj", "vpc_name": "nsi-consumer-vpc",
+                   "subnets": [{"name": "nsi-subnet", "region": "us-central1", "ip_cidr_range": "10.10.0.0/24"}]},
+  "nsi_cfg": {"intercept_endpoint_group": "ieg-1", "intercept_endpoint_group_association": "iega-1",
+              "security_profile": "sp-1", "security_profile_group": "spg-1",
+              "firewall_policy": "nsi-policy", "firewall_policy_association": "nsi-policy-assoc",
+              "firewall_policy_rule_priority": 1000, "policy_order": "BEFORE_CLASSIC_FIREWALL"},
+  "vm_cfg": {"subnet_name": "nsi-subnet", "region": "us-central1",
+             "server_zone": "us-central1-a", "client_zone": "us-central1-b",
+             "server_name": "nsi-server-01", "client_name": "nsi-client-01",
+             "instance_type": "e2-medium", "image_name": "debian-12",
+             "image_project": "debian-cloud", "tags": ["nsi-test"], "server_port": 8080}
+}</code></pre>
+        </details>
+        <details>
+          <summary>B. Create/Ensure VPC</summary>
+          <pre><code>{
+  "name": "nsi-consumer-vpc",
+  "routingConfig": {"routingMode": "REGIONAL"},
+  "autoCreateSubnetworks": false,
+  "description": "NSI in-band consumer VPC"
+}</code></pre>
+        </details>
+        <details>
+          <summary>C. Create/Ensure Subnets</summary>
+          <pre><code>{
+  "name": "nsi-subnet",
+  "region": "us-central1",
+  "network": "projects/consumer-prj/global/networks/nsi-consumer-vpc",
+  "ipCidrRange": "10.10.0.0/24",
+  "privateIpGoogleAccess": true,
+  "enableFlowLogs": false
+}</code></pre>
+        </details>
+        <details>
+          <summary>D. Validate Producer Intercept Deployment Group</summary>
+          <pre><code>GET https://networksecurity.googleapis.com/v1/projects/producer-prj/locations/global/interceptDeploymentGroups/prod-idg</code></pre>
+        </details>
+        <details>
+          <summary>E. Create/Ensure Intercept Endpoint Group</summary>
+          <pre><code>{
+  "interceptDeploymentGroup": "projects/producer-prj/locations/global/interceptDeploymentGroups/prod-idg",
+  "description": "Consumer IEG"
+}</code></pre>
+        </details>
+        <details>
+          <summary>F. Create/Ensure IEG Association</summary>
+          <pre><code>{
+  "interceptEndpointGroup": "projects/consumer-prj/locations/global/interceptEndpointGroups/ieg-1",
+  "network": "projects/consumer-prj/global/networks/nsi-consumer-vpc",
+  "subnetwork": "projects/consumer-prj/regions/us-central1/subnetworks/nsi-subnet"
+}</code></pre>
+        </details>
+        <details>
+          <summary>G. Create/Ensure Security Profile</summary>
+          <pre><code>{
+  "type": "INTERCEPT",
+  "interceptProfile": {
+    "interceptEndpointGroup": "projects/consumer-prj/locations/global/interceptEndpointGroups/ieg-1"
+  }
+}</code></pre>
+        </details>
+        <details>
+          <summary>H. Create/Ensure Security Profile Group</summary>
+          <pre><code>{
+  "securityProfiles": [
+    "projects/consumer-prj/locations/global/securityProfiles/sp-1"
+  ]
+}</code></pre>
+        </details>
+        <details>
+          <summary>I. Ensure Firewall Policy Order BEFORE_CLASSIC_FIREWALL</summary>
+          <pre><code>{
+  "networkFirewallPolicyEnforcementOrder": "BEFORE_CLASSIC_FIREWALL"
+}</code></pre>
+        </details>
+        <details>
+          <summary>J. Create/Ensure Network Firewall Policy</summary>
+          <pre><code>{
+  "name": "nsi-policy",
+  "description": "NSI in-band firewall policy"
+}</code></pre>
+        </details>
+        <details>
+          <summary>K. Create/Ensure Firewall Policy Rule</summary>
+          <pre><code>{
+  "action": "applySecurityProfileGroup",
+  "securityProfileGroup": "projects/consumer-prj/locations/global/securityProfileGroups/spg-1",
+  "direction": "INGRESS",
+  "match": {
+    "srcIpRanges": ["10.10.0.0/24"],
+    "destIpRanges": ["10.10.0.0/24"],
+    "layer4Configs": [{"ipProtocol": "all"}]
+  }
+}</code></pre>
+        </details>
+        <details>
+          <summary>L. Create/Ensure Policy Association</summary>
+          <pre><code>{
+  "name": "nsi-policy-assoc",
+  "attachmentTarget": "projects/consumer-prj/global/networks/nsi-consumer-vpc"
+}</code></pre>
+        </details>
+        <details>
+          <summary>M. Create Allow-Internal Firewall Rule</summary>
+          <pre><code>{
+  "name": "nsi-consumer-vpc-allow-internal",
+  "direction": "INGRESS",
+  "priority": 1000,
+  "network": "projects/consumer-prj/global/networks/nsi-consumer-vpc",
+  "allowed": [{"IPProtocol": "all"}],
+  "sourceRanges": ["10.10.0.0/24"],
+  "targetTags": ["nsi-test"]
+}</code></pre>
+        </details>
+        <details>
+          <summary>N. Create Test VMs (Client/Server)</summary>
+          <pre><code>{
+  "name": "nsi-server-01",
+  "zone": "us-central1-a",
+  "machineType": "zones/us-central1-a/machineTypes/e2-medium",
+  "networkInterfaces": [{"subnetwork": "regions/us-central1/subnetworks/nsi-subnet"}],
+  "metadata": {"items": [{"key": "startup-script", "value": "#!/bin/bash ..."}]}
+}</code></pre>
+          <div class="payload-note">Client VM payload mirrors the server with a client startup script.</div>
+        </details>
+        <details>
+          <summary>O. Verify Traffic via Serial Output</summary>
+          <pre><code>{
+  "serialPortOutput": "NSI_CLIENT_SUCCESS 10.10.0.10:8080"
+}</code></pre>
+        </details>
+      </div>
+      <div>
+        <h2>Sample Payloads: Infra Cleanup</h2>
+        <details>
+          <summary>A1. Load Config or Params</summary>
+          <pre><code>{
+  "consumer_cfg": {"project": "consumer-prj", "vpc_name": "nsi-consumer-vpc"},
+  "nsi_cfg": {"intercept_endpoint_group": "ieg-1", "intercept_endpoint_group_association": "iega-1",
+              "security_profile": "sp-1", "security_profile_group": "spg-1",
+              "firewall_policy": "nsi-policy", "firewall_policy_association": "nsi-policy-assoc",
+              "firewall_policy_rule_priority": 1000},
+  "vm_cfg": {"server_name": "nsi-server-01", "client_name": "nsi-client-01",
+             "server_zone": "us-central1-a", "client_zone": "us-central1-b"}
+}</code></pre>
+        </details>
+        <details>
+          <summary>B1. Delete Test VMs</summary>
+          <pre><code>DELETE https://compute.googleapis.com/compute/v1/projects/consumer-prj/zones/us-central1-a/instances/nsi-server-01</code></pre>
+        </details>
+        <details>
+          <summary>C1. Delete Allow-Internal Rule</summary>
+          <pre><code>DELETE https://compute.googleapis.com/compute/v1/projects/consumer-prj/global/firewalls/nsi-consumer-vpc-allow-internal</code></pre>
+        </details>
+        <details>
+          <summary>D1. Delete Policy Association</summary>
+          <pre><code>{
+  "name": "nsi-policy-assoc"
+}</code></pre>
+        </details>
+        <details>
+          <summary>E1. Delete Policy Rule</summary>
+          <pre><code>{
+  "priority": 1000
+}</code></pre>
+        </details>
+        <details>
+          <summary>F1. Delete Network Firewall Policy</summary>
+          <pre><code>DELETE https://compute.googleapis.com/compute/v1/projects/consumer-prj/global/networkFirewallPolicies/nsi-policy</code></pre>
+        </details>
+        <details>
+          <summary>G1. Delete Security Profile Group</summary>
+          <pre><code>DELETE https://networksecurity.googleapis.com/v1/projects/consumer-prj/locations/global/securityProfileGroups/spg-1</code></pre>
+        </details>
+        <details>
+          <summary>H1. Delete Security Profile</summary>
+          <pre><code>DELETE https://networksecurity.googleapis.com/v1/projects/consumer-prj/locations/global/securityProfiles/sp-1</code></pre>
+        </details>
+        <details>
+          <summary>I1. Delete IEG Association</summary>
+          <pre><code>DELETE https://networksecurity.googleapis.com/v1/projects/consumer-prj/locations/global/interceptEndpointGroupAssociations/iega-1</code></pre>
+        </details>
+        <details>
+          <summary>J1. Delete IEG</summary>
+          <pre><code>DELETE https://networksecurity.googleapis.com/v1/projects/consumer-prj/locations/global/interceptEndpointGroups/ieg-1</code></pre>
+        </details>
+        <details>
+          <summary>K1. Delete VPC/Subnets?</summary>
+          <pre><code>{
+  "delete_vpcs_on_cleanup": false
+}</code></pre>
+        </details>
+        <details>
+          <summary>L1. Delete Subnets</summary>
+          <pre><code>DELETE https://compute.googleapis.com/compute/v1/projects/consumer-prj/regions/us-central1/subnetworks/nsi-subnet</code></pre>
+        </details>
+        <details>
+          <summary>M1. Delete VPC</summary>
+          <pre><code>DELETE https://compute.googleapis.com/compute/v1/projects/consumer-prj/global/networks/nsi-consumer-vpc</code></pre>
+        </details>
+      </div>
+    </section>
+
+    <section>
+      <h2>Implementation Notes</h2>
+      <details>
+        <summary>Dependency Ordering</summary>
+        <p>Resource creation strictly follows the NSI in-band consumer dependency chain. Deletions happen in reverse order
+          to avoid dangling references.</p>
+      </details>
+      <details>
+        <summary>Firewall Policy Evaluation Order</summary>
+        <p>The consumer VPC must have <code>networkFirewallPolicyEnforcementOrder</code> set to
+          <code>BEFORE_CLASSIC_FIREWALL</code> to ensure policy rules are evaluated prior to classic firewall rules.</p>
+      </details>
+      <details>
+        <summary>Override Behavior</summary>
+        <p>If <code>override_existing_resources</code> is enabled, resources are deleted and recreated when a name match
+          is found. Otherwise, the existing resource is reused and logged.</p>
+      </details>
+      <details>
+        <summary>Verification Strategy</summary>
+        <p>Verification reads the client VM serial output for a success marker. This avoids SSH dependencies and scales
+          with parallel deployments.</p>
+      </details>
+      <details>
+        <summary>Parallelism</summary>
+        <p>Batch creation helpers are used for VPCs, subnets, and other resources wherever supported. The orchestration
+          design supports parallel deployments across projects or regions.</p>
+      </details>
+    </section>
+
+    <section>
+      <h2>Operational Checklist</h2>
+      <ul>
+        <li>Producer intercept deployment group exists and is reachable by the consumer project.</li>
+        <li>Consumer VPC enforcement order is set to <code>BEFORE_CLASSIC_FIREWALL</code>.</li>
+        <li>Firewall policy rule uses <code>applySecurityProfileGroup</code> and references the correct SPG.</li>
+        <li>IEG Association matches the same IEG referenced in the Security Profile.</li>
+        <li>Client/server test VMs are in the subnet associated to the IEG Association.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Permissions Summary</h2>
+      <h3>Consumer Project</h3>
+      <ul>
+        <li><code>roles/networksecurity.admin</code> for IEG/IEGA/Security Profile/Group</li>
+        <li><code>roles/compute.networkAdmin</code> for VPC/Subnet lifecycle</li>
+        <li><code>roles/compute.securityAdmin</code> for firewall rules and policies</li>
+        <li><code>roles/compute.instanceAdmin.v1</code> for VM lifecycle</li>
+        <li><code>roles/compute.viewer</code> for serial port output</li>
+      </ul>
+      <h3>Producer Project</h3>
+      <ul>
+        <li><code>roles/networksecurity.viewer</code> to read intercept deployment group</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <span class="pill">NSI In-Band</span>
+    <span class="pill">Infra Setup/Cleanup</span>
+    <span class="pill">Production-Ready</span>
+  </footer>
+</body>
+</html>
